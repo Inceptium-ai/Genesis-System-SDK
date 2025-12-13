@@ -1,0 +1,364 @@
+# =============================================================================
+# Component Contract: Keycloak
+# =============================================================================
+# Genesis Component Catalog - Identity & Access Management
+# Version: 1.0.0
+# =============================================================================
+
+component:
+  name: "Keycloak"
+  category: "identity"
+  version: "24.0.x"
+  catalog_id: "keycloak-oidc"
+  description: "Enterprise-grade OIDC identity provider with OAuth 2.0, SSO, and RBAC"
+  
+  # Maintainer info for catalog
+  maintainer:
+    team: "Platform"
+    contact: "platform@genesis.io"
+    
+  # Tags for discoverability
+  tags:
+    - authentication
+    - authorization
+    - oauth2
+    - oidc
+    - sso
+    - rbac
+
+# =============================================================================
+# INPUT SCHEMA
+# =============================================================================
+
+inputs:
+  required:
+    - name: "KEYCLOAK_ADMIN"
+      type: "string"
+      description: "Admin username for Keycloak console"
+      default: "admin"
+      validation:
+        min_length: 3
+        pattern: "^[a-zA-Z0-9_-]+$"
+        
+    - name: "KEYCLOAK_ADMIN_PASSWORD"
+      type: "string"
+      description: "Admin password"
+      sensitive: true
+      validation:
+        min_length: 8
+        
+    - name: "KC_DB"
+      type: "enum"
+      description: "Database type"
+      values: ["postgres", "mysql", "mariadb"]
+      default: "postgres"
+      
+    - name: "KC_DB_URL"
+      type: "string"
+      description: "JDBC database connection URL"
+      format: "jdbc:postgresql://host:port/database"
+      
+    - name: "KC_DB_USERNAME"
+      type: "string"
+      description: "Database username"
+      
+    - name: "KC_DB_PASSWORD"
+      type: "string"
+      description: "Database password"
+      sensitive: true
+      
+  optional:
+    - name: "KC_HOSTNAME"
+      type: "string"
+      description: "External hostname for Keycloak"
+      default: "localhost"
+      
+    - name: "KC_PROXY"
+      type: "enum"
+      description: "Proxy mode"
+      values: ["none", "edge", "reencrypt", "passthrough"]
+      default: "edge"
+      
+    - name: "KC_HTTP_ENABLED"
+      type: "boolean"
+      description: "Enable HTTP (required for dev)"
+      default: true
+      
+    - name: "KC_HEALTH_ENABLED"
+      type: "boolean"
+      description: "Enable health endpoints"
+      default: true
+      
+    - name: "KC_METRICS_ENABLED"
+      type: "boolean"
+      description: "Enable metrics endpoints"
+      default: false
+
+# =============================================================================
+# OUTPUT SCHEMA
+# =============================================================================
+
+outputs:
+  endpoints:
+    - name: "admin_console"
+      protocol: "HTTP"
+      port: 8080
+      path: "/admin"
+      description: "Admin console UI"
+      
+    - name: "auth_endpoint"
+      protocol: "HTTP"
+      port: 8080
+      path: "/realms/{realm}/protocol/openid-connect/auth"
+      description: "OIDC authorization endpoint"
+      
+    - name: "token_endpoint"
+      protocol: "HTTP"
+      port: 8080
+      path: "/realms/{realm}/protocol/openid-connect/token"
+      description: "OIDC token endpoint"
+      
+    - name: "userinfo_endpoint"
+      protocol: "HTTP"
+      port: 8080
+      path: "/realms/{realm}/protocol/openid-connect/userinfo"
+      description: "OIDC userinfo endpoint"
+      
+    - name: "jwks_endpoint"
+      protocol: "HTTP"
+      port: 8080
+      path: "/realms/{realm}/protocol/openid-connect/certs"
+      description: "JWKS endpoint for token verification"
+      
+    - name: "well_known"
+      protocol: "HTTP"
+      port: 8080
+      path: "/realms/{realm}/.well-known/openid-configuration"
+      description: "OIDC discovery endpoint"
+      
+  events:
+    - name: "user.login"
+      description: "User successfully logged in"
+      payload:
+        user_id: "string"
+        realm: "string"
+        client_id: "string"
+        timestamp: "datetime"
+        
+    - name: "user.logout"
+      description: "User logged out"
+      
+    - name: "user.register"
+      description: "New user registered"
+
+# =============================================================================
+# HEALTH CHECKS
+# =============================================================================
+
+health_checks:
+  readiness:
+    endpoint: "/health/ready"
+    method: "GET"
+    expected_status: 200
+    interval: "30s"
+    timeout: "10s"
+    
+  liveness:
+    endpoint: "/health/live"
+    method: "GET"
+    expected_status: 200
+    interval: "30s"
+    timeout: "10s"
+    
+  startup:
+    endpoint: "/health/started"
+    method: "GET"
+    expected_status: 200
+    initial_delay: "30s"
+    period: "10s"
+    failure_threshold: 30
+
+# =============================================================================
+# SMOKE TESTS
+# =============================================================================
+
+smoke_tests:
+  - name: "admin_console_accessible"
+    description: "Admin console is accessible"
+    type: "http"
+    config:
+      url: "http://localhost:8080/admin"
+      method: "GET"
+      expected_status: 200
+      
+  - name: "realm_exists"
+    description: "Application realm is configured"
+    type: "http"
+    config:
+      url: "http://localhost:8080/realms/resumax/.well-known/openid-configuration"
+      method: "GET"
+      expected_status: 200
+      response_contains: "authorization_endpoint"
+      
+  - name: "test_user_login"
+    description: "Test user can authenticate"
+    type: "script"
+    config:
+      script: |
+        # Get token for test user
+        curl -s -X POST \
+          "http://localhost:8080/realms/resumax/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "grant_type=password" \
+          -d "client_id=resumax-web" \
+          -d "username=testuser" \
+          -d "password=testpass123!" \
+          | jq -e '.access_token'
+      expected_exit_code: 0
+
+# =============================================================================
+# GOLDEN CONFIGURATION
+# =============================================================================
+
+golden_config:
+  description: "Recommended configuration for Blueprint C (AI Webapp)"
+  
+  docker_compose:
+    image: "quay.io/keycloak/keycloak:24.0"
+    command: "start-dev --import-realm"
+    environment:
+      KEYCLOAK_ADMIN: "${KEYCLOAK_ADMIN:-admin}"
+      KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD}"
+      KC_DB: "postgres"
+      KC_DB_URL: "jdbc:postgresql://postgres:5432/keycloak"
+      KC_DB_USERNAME: "${POSTGRES_USER}"
+      KC_DB_PASSWORD: "${POSTGRES_PASSWORD}"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: "edge"
+    volumes:
+      - "./config/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: "service_healthy"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: "30s"
+      timeout: "10s"
+      retries: 10
+      start_period: "60s"
+
+  realm_template:
+    file: "keycloak-realm-template.json"
+    variables:
+      - "{{REALM_NAME}}"
+      - "{{CLIENT_ID}}"
+      - "{{REDIRECT_URIS}}"
+      - "{{WEB_ORIGINS}}"
+
+# =============================================================================
+# INTEGRATION PATTERNS
+# =============================================================================
+
+integration_patterns:
+  - name: "nextjs_oidc"
+    description: "Next.js frontend with OIDC login"
+    pattern: |
+      // Using keycloak-js or next-auth
+      import Keycloak from 'keycloak-js';
+      
+      const keycloak = new Keycloak({
+        url: process.env.NEXT_PUBLIC_KEYCLOAK_URL,
+        realm: process.env.NEXT_PUBLIC_KEYCLOAK_REALM,
+        clientId: process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID,
+      });
+      
+  - name: "fastapi_jwt_validation"
+    description: "FastAPI backend JWT validation"
+    pattern: |
+      from fastapi import Depends, HTTPException
+      from fastapi.security import HTTPBearer
+      import jwt
+      from jwt import PyJWKClient
+      
+      jwks_client = PyJWKClient(
+          f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/certs"
+      )
+      
+      async def validate_token(token: str = Depends(HTTPBearer())):
+          signing_key = jwks_client.get_signing_key_from_jwt(token.credentials)
+          return jwt.decode(
+              token.credentials,
+              signing_key.key,
+              algorithms=["RS256"],
+              audience="resumax-web"
+          )
+
+# =============================================================================
+# UPGRADE NOTES
+# =============================================================================
+
+upgrade_notes:
+  from_23_to_24:
+    breaking_changes:
+      - "Legacy admin console removed, use new admin console at /admin"
+      - "KC_FEATURES renamed to KC_SPI_*"
+    migration_steps:
+      - "Export existing realm before upgrade"
+      - "Update environment variables"
+      - "Run with --import-realm on first start"
+      - "Verify all clients and users migrated"
+    rollback:
+      - "Keep database backup before upgrade"
+      - "Realm export can be re-imported to previous version"
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+
+troubleshooting:
+  - symptom: "Container exits immediately"
+    causes:
+      - "Database not ready"
+      - "Invalid database credentials"
+    solutions:
+      - "Ensure postgres healthcheck passes before Keycloak starts"
+      - "Verify KC_DB_URL, KC_DB_USERNAME, KC_DB_PASSWORD"
+      
+  - symptom: "Realm import fails"
+    causes:
+      - "Invalid JSON in realm file"
+      - "Duplicate realm name"
+    solutions:
+      - "Validate JSON syntax"
+      - "Delete existing realm or use different name"
+      
+  - symptom: "CORS errors from frontend"
+    causes:
+      - "Web origins not configured in client"
+    solutions:
+      - "Add frontend URL to client's Web Origins in Keycloak admin"
+      - "Ensure protocol (http/https) matches"
+
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+
+security:
+  recommendations:
+    - "Change default admin password immediately"
+    - "Enable HTTPS in production (KC_HOSTNAME_STRICT=true)"
+    - "Configure appropriate password policies"
+    - "Enable brute force protection"
+    - "Review and restrict client redirect URIs"
+    
+  production_checklist:
+    - "[ ] HTTPS enabled"
+    - "[ ] Admin password changed from default"
+    - "[ ] Public client disabled for confidential apps"
+    - "[ ] Redirect URIs restricted to production domains"
+    - "[ ] Brute force protection enabled"
+    - "[ ] Audit logging enabled"

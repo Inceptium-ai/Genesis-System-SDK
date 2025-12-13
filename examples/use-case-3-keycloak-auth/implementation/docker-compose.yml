@@ -1,0 +1,90 @@
+name: keycloak-auth-demo
+
+services:
+  # ============================================
+  # DATABASE FOR KEYCLOAK
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: kc-postgres
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+    ports:
+      - "5435:5432"
+    volumes:
+      - kc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # KEYCLOAK IDENTITY PROVIDER
+  # ============================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: kc-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/keycloak:/opt/keycloak/data/import
+      - ./config/keycloak/themes:/opt/keycloak/themes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================
+  # FASTAPI BACKEND (JWT VERIFICATION)
+  # ============================================
+  backend:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    container_name: kc-backend
+    ports:
+      - "8002:8000"
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: genesis
+      KEYCLOAK_CLIENT_ID: genesis-app
+      KEYCLOAK_PUBLIC_URL: http://localhost:8080
+    depends_on:
+      - keycloak
+    volumes:
+      - ./services/backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ============================================
+  # REACT FRONTEND (VITE DEV SERVER)
+  # ============================================
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: kc-frontend
+    ports:
+      - "3000:5173"
+    volumes:
+      - ./services/frontend/src:/app/src
+      - ./services/frontend/public:/app/public
+      - ./services/frontend/index.html:/app/index.html
+    depends_on:
+      - keycloak
+      - backend
+
+volumes:
+  kc_postgres_data:
+    driver: local

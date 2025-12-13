@@ -1,0 +1,312 @@
+/* Genesis Custom Keycloak Theme */
+/* Matches the Genesis app design system */
+
+/* =================================================================
+   VARIABLES - Genesis Design System
+   ================================================================= */
+:root {
+  --genesis-orange: #ea580c;
+  --genesis-orange-hover: #c2410c;
+  --genesis-bg: #f8fafc;
+  --genesis-card-bg: #ffffff;
+  --genesis-text-primary: #1e293b;
+  --genesis-text-secondary: #64748b;
+  --genesis-border: #e2e8f0;
+  --genesis-input-border: #cbd5e1;
+  --genesis-input-focus: #ea580c;
+  --genesis-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --genesis-radius: 0.75rem;
+}
+
+/* =================================================================
+   PAGE BACKGROUND
+   ================================================================= */
+.login-pf body {
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%) !important;
+  min-height: 100vh;
+}
+
+/* Remove the default Keycloak background image */
+.login-pf {
+  background-image: none !important;
+  background-color: var(--genesis-bg) !important;
+}
+
+/* =================================================================
+   HEADER / LOGO
+   ================================================================= */
+#kc-header {
+  background: transparent !important;
+  padding-top: 2rem;
+}
+
+#kc-header-wrapper {
+  color: var(--genesis-orange) !important;
+  font-size: 2rem !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+  letter-spacing: 0.15em !important;
+  text-transform: uppercase !important;
+}
+
+/* =================================================================
+   LOGIN CARD
+   ================================================================= */
+#kc-form-wrapper,
+.card-pf {
+  background: var(--genesis-card-bg) !important;
+  border-radius: var(--genesis-radius) !important;
+  box-shadow: var(--genesis-shadow) !important;
+  border: 1px solid var(--genesis-border) !important;
+  padding: 2rem !important;
+  max-width: 420px !important;
+  margin: 2rem auto !important;
+}
+
+#kc-content {
+  padding: 0 !important;
+}
+
+#kc-content-wrapper {
+  padding: 0 !important;
+}
+
+/* =================================================================
+   FORM TITLE
+   ================================================================= */
+#kc-page-title {
+  color: var(--genesis-text-primary) !important;
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* =================================================================
+   FORM LABELS
+   ================================================================= */
+.form-group label,
+.control-label {
+  color: var(--genesis-text-secondary) !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  margin-bottom: 0.5rem !important;
+}
+
+/* =================================================================
+   INPUT FIELDS
+   ================================================================= */
+.form-control,
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+  background: var(--genesis-card-bg) !important;
+  border: 1px solid var(--genesis-input-border) !important;
+  border-radius: 0.5rem !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 1rem !important;
+  color: var(--genesis-text-primary) !important;
+  transition: all 0.2s ease !important;
+}
+
+.form-control:focus,
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus {
+  outline: none !important;
+  border-color: var(--genesis-orange) !important;
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.1) !important;
+}
+
+/* =================================================================
+   PRIMARY BUTTON (Sign In)
+   ================================================================= */
+.btn-primary,
+input[type="submit"],
+#kc-login {
+  background: var(--genesis-orange) !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  padding: 0.75rem 1.5rem !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  color: white !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  width: 100% !important;
+  text-transform: none !important;
+}
+
+.btn-primary:hover,
+input[type="submit"]:hover,
+#kc-login:hover {
+  background: var(--genesis-orange-hover) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.3) !important;
+}
+
+.btn-primary:active,
+input[type="submit"]:active,
+#kc-login:active {
+  transform: translateY(0) !important;
+}
+
+/* =================================================================
+   SECONDARY BUTTON / LINKS
+   ================================================================= */
+.btn-default,
+#kc-registration a {
+  background: transparent !important;
+  border: 1px solid var(--genesis-border) !important;
+  border-radius: 0.5rem !important;
+  padding: 0.75rem 1.5rem !important;
+  font-size: 1rem !important;
+  font-weight: 500 !important;
+  color: var(--genesis-text-secondary) !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-default:hover,
+#kc-registration a:hover {
+  background: var(--genesis-bg) !important;
+  color: var(--genesis-text-primary) !important;
+}
+
+/* =================================================================
+   LINKS
+   ================================================================= */
+a,
+.login-pf a {
+  color: var(--genesis-orange) !important;
+  text-decoration: none !important;
+  transition: color 0.2s ease !important;
+}
+
+a:hover,
+.login-pf a:hover {
+  color: var(--genesis-orange-hover) !important;
+  text-decoration: underline !important;
+}
+
+/* Forgot password link */
+#kc-form-options a {
+  font-size: 0.875rem !important;
+  color: var(--genesis-text-secondary) !important;
+}
+
+#kc-form-options a:hover {
+  color: var(--genesis-orange) !important;
+}
+
+/* =================================================================
+   REMEMBER ME CHECKBOX
+   ================================================================= */
+#kc-form-options .checkbox label {
+  color: var(--genesis-text-secondary) !important;
+  font-size: 0.875rem !important;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--genesis-orange) !important;
+}
+
+/* =================================================================
+   REGISTRATION / NEW USER SECTION
+   ================================================================= */
+#kc-registration {
+  margin-top: 1.5rem !important;
+  padding-top: 1.5rem !important;
+  border-top: 1px solid var(--genesis-border) !important;
+  text-align: center !important;
+}
+
+#kc-registration span {
+  color: var(--genesis-text-secondary) !important;
+  font-size: 0.875rem !important;
+}
+
+/* =================================================================
+   ALERTS / MESSAGES
+   ================================================================= */
+.alert {
+  border-radius: 0.5rem !important;
+  padding: 1rem !important;
+  margin-bottom: 1rem !important;
+}
+
+.alert-error,
+.alert-danger {
+  background: #fef2f2 !important;
+  border: 1px solid #fecaca !important;
+  color: #991b1b !important;
+}
+
+.alert-success {
+  background: #f0fdf4 !important;
+  border: 1px solid #bbf7d0 !important;
+  color: #166534 !important;
+}
+
+.alert-warning {
+  background: #fffbeb !important;
+  border: 1px solid #fde68a !important;
+  color: #92400e !important;
+}
+
+.alert-info {
+  background: #eff6ff !important;
+  border: 1px solid #bfdbfe !important;
+  color: #1e40af !important;
+}
+
+/* =================================================================
+   SOCIAL LOGIN BUTTONS
+   ================================================================= */
+#kc-social-providers {
+  margin-top: 1.5rem !important;
+  padding-top: 1.5rem !important;
+  border-top: 1px solid var(--genesis-border) !important;
+}
+
+#kc-social-providers .zocial {
+  border-radius: 0.5rem !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.875rem !important;
+  transition: all 0.2s ease !important;
+}
+
+/* =================================================================
+   FORM OPTIONS ROW
+   ================================================================= */
+#kc-form-options {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-bottom: 1rem !important;
+}
+
+/* =================================================================
+   MISC / CLEANUP
+   ================================================================= */
+.login-pf .container-fluid {
+  padding: 0 1rem !important;
+}
+
+/* Remove default Keycloak styling artifacts */
+.pf-c-alert,
+.pf-c-button {
+  font-family: inherit !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  #kc-form-wrapper,
+  .card-pf {
+    margin: 1rem !important;
+    padding: 1.5rem !important;
+  }
+  
+  #kc-header-wrapper {
+    font-size: 1.5rem !important;
+  }
+}

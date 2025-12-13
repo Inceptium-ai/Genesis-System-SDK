@@ -1,0 +1,497 @@
+# =============================================================================
+# Component Contract: PDF Generator Service
+# =============================================================================
+# Genesis Component Catalog - Document Generation
+# Version: 1.0.0
+# =============================================================================
+
+component:
+  name: "PDF Generator Service"
+  category: "document-generation"
+  version: "custom"
+  catalog_id: "pdf-generator"
+  description: "Modular document generation service for PDF/DOCX from structured data"
+  
+  maintainer:
+    team: "Platform"
+    contact: "platform@genesis.io"
+    
+  tags:
+    - pdf
+    - docx
+    - document-generation
+    - latex
+    - templates
+    - export
+
+# =============================================================================
+# INPUT SCHEMA
+# =============================================================================
+
+inputs:
+  required:
+    - name: "S3_ENDPOINT"
+      type: "string"
+      description: "S3-compatible storage endpoint"
+      format: "http://host:port"
+      
+    - name: "S3_ACCESS_KEY"
+      type: "string"
+      description: "S3 access key"
+      sensitive: true
+      
+    - name: "S3_SECRET_KEY"
+      type: "string"
+      description: "S3 secret key"
+      sensitive: true
+      
+    - name: "S3_BUCKET"
+      type: "string"
+      description: "S3 bucket for output files"
+      default: "exports"
+      
+  optional:
+    - name: "OTEL_EXPORTER_OTLP_ENDPOINT"
+      type: "string"
+      description: "OpenTelemetry collector endpoint"
+      default: "http://localhost:4317"
+      
+    - name: "LOG_LEVEL"
+      type: "enum"
+      values: ["DEBUG", "INFO", "WARNING", "ERROR"]
+      default: "INFO"
+      
+    - name: "MAX_FILE_SIZE_MB"
+      type: "integer"
+      description: "Maximum output file size in MB"
+      default: 50
+      
+    - name: "SIGNED_URL_EXPIRY_HOURS"
+      type: "integer"
+      description: "Hours until signed URL expires"
+      default: 24
+
+# =============================================================================
+# OUTPUT SCHEMA
+# =============================================================================
+
+outputs:
+  endpoints:
+    - name: "health"
+      method: "GET"
+      path: "/health"
+      description: "Health check endpoint"
+      
+    - name: "render"
+      method: "POST"
+      path: "/render"
+      description: "Render document from template"
+      request:
+        resume_data:
+          type: "object"
+          description: "Structured resume data"
+          properties:
+            name: "string"
+            email: "string"
+            phone: "string"
+            summary: "string"
+            experience: "array"
+            education: "array"
+            skills: "array"
+        template_id:
+          type: "string"
+          description: "Template identifier"
+          enum: ["professional-classic", "modern-minimal", "ats-optimized"]
+        format:
+          type: "string"
+          description: "Output format"
+          enum: ["pdf", "docx"]
+      response:
+        job_id: "uuid"
+        status: "string"
+        
+    - name: "job_status"
+      method: "GET"
+      path: "/jobs/{job_id}"
+      description: "Get render job status"
+      response:
+        job_id: "uuid"
+        status: "enum[pending,processing,completed,failed]"
+        file_url: "string?"
+        expires_at: "datetime?"
+        error: "string?"
+        
+    - name: "templates"
+      method: "GET"
+      path: "/templates"
+      description: "List available templates"
+      response:
+        templates:
+          type: "array"
+          items:
+            id: "string"
+            name: "string"
+            description: "string"
+            preview_url: "string"
+            formats: "array[string]"
+
+# =============================================================================
+# HEALTH CHECKS
+# =============================================================================
+
+health_checks:
+  readiness:
+    endpoint: "/health/ready"
+    method: "GET"
+    expected_status: 200
+    checks:
+      - name: "s3_connection"
+        description: "S3 storage accessible"
+      - name: "latex_available"
+        description: "LaTeX compiler installed"
+        
+  liveness:
+    endpoint: "/health"
+    method: "GET"
+    expected_status: 200
+
+# =============================================================================
+# SMOKE TESTS
+# =============================================================================
+
+smoke_tests:
+  - name: "health_check"
+    description: "Service is running"
+    type: "http"
+    config:
+      url: "http://localhost:8001/health"
+      method: "GET"
+      expected_status: 200
+      
+  - name: "latex_compiler"
+    description: "LaTeX compiler works"
+    type: "script"
+    config:
+      script: |
+        pdflatex --version
+      expected_exit_code: 0
+      
+  - name: "render_pdf"
+    description: "Can render simple PDF"
+    type: "script"
+    config:
+      script: |
+        curl -s -X POST http://localhost:8001/render \
+          -H "Content-Type: application/json" \
+          -d '{"resume_data":{"name":"Test User","email":"test@example.com"},"template_id":"ats-optimized","format":"pdf"}' \
+          | jq -e '.job_id'
+      expected_exit_code: 0
+
+# =============================================================================
+# GOLDEN CONFIGURATION
+# =============================================================================
+
+golden_config:
+  description: "Recommended configuration for PDF generation"
+  
+  dockerfile: |
+    FROM python:3.11-slim
+    
+    WORKDIR /app
+    
+    # Install system dependencies including LaTeX
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        texlive-latex-base \
+        texlive-fonts-recommended \
+        texlive-latex-extra \
+        texlive-fonts-extra \
+        latexmk \
+        # For WeasyPrint (HTML-based PDF)
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libgdk-pixbuf2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        && rm -rf /var/lib/apt/lists/*
+    
+    # Install Python dependencies
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    
+    # Copy application
+    COPY . .
+    
+    # Copy templates
+    COPY templates/ /app/templates/
+    
+    # Create non-root user
+    RUN useradd -m appuser && chown -R appuser:appuser /app
+    USER appuser
+    
+    EXPOSE 8001
+    
+    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    
+  requirements: |
+    # Web Framework
+    fastapi>=0.109.0
+    uvicorn[standard]>=0.27.0
+    
+    # PDF Generation
+    weasyprint>=60.0
+    jinja2>=3.1.0
+    
+    # DOCX Generation
+    python-docx>=1.1.0
+    
+    # Storage
+    boto3>=1.34.0
+    
+    # Validation
+    pydantic>=2.0.0
+    pydantic-settings>=2.0.0
+    
+    # Observability
+    opentelemetry-api>=1.22.0
+    opentelemetry-sdk>=1.22.0
+    opentelemetry-instrumentation-fastapi>=0.43b0
+    
+    # Testing
+    pytest>=8.0.0
+    httpx>=0.26.0
+
+  project_structure: |
+    services/pdf-service/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── app/
+    │   ├── __init__.py
+    │   ├── main.py              # FastAPI app
+    │   ├── config.py            # Settings
+    │   │
+    │   ├── api/
+    │   │   ├── __init__.py
+    │   │   ├── health.py
+    │   │   ├── render.py
+    │   │   └── templates.py
+    │   │
+    │   ├── services/
+    │   │   ├── __init__.py
+    │   │   ├── pdf_renderer.py  # WeasyPrint/LaTeX
+    │   │   ├── docx_renderer.py # python-docx
+    │   │   └── storage.py       # S3 operations
+    │   │
+    │   └── models/
+    │       ├── __init__.py
+    │       └── schemas.py
+    │
+    └── templates/
+        ├── professional-classic/
+        │   ├── template.tex
+        │   └── preview.png
+        ├── modern-minimal/
+        │   ├── template.tex
+        │   └── preview.png
+        └── ats-optimized/
+            ├── template.html
+            └── preview.png
+
+# =============================================================================
+# TEMPLATE SYSTEM
+# =============================================================================
+
+templates:
+  - id: "professional-classic"
+    name: "Professional Classic"
+    description: "Traditional corporate style"
+    engine: "latex"
+    file: "professional-classic/template.tex"
+    supports:
+      - "pdf"
+      
+  - id: "modern-minimal"
+    name: "Modern Minimal"
+    description: "Clean, minimalist design"
+    engine: "latex"
+    file: "modern-minimal/template.tex"
+    supports:
+      - "pdf"
+      
+  - id: "ats-optimized"
+    name: "ATS Optimized"
+    description: "Optimized for applicant tracking systems"
+    engine: "weasyprint"
+    file: "ats-optimized/template.html"
+    supports:
+      - "pdf"
+      - "docx"
+
+template_variables:
+  description: "Standard template variables"
+  variables:
+    - name: "name"
+      type: "string"
+      required: true
+    - name: "email"
+      type: "string"
+    - name: "phone"
+      type: "string"
+    - name: "location"
+      type: "string"
+    - name: "linkedin"
+      type: "string"
+    - name: "summary"
+      type: "string"
+    - name: "experience"
+      type: "array"
+      items:
+        company: "string"
+        title: "string"
+        start_date: "string"
+        end_date: "string"
+        bullets: "array[string]"
+    - name: "education"
+      type: "array"
+      items:
+        institution: "string"
+        degree: "string"
+        field: "string"
+        graduation_date: "string"
+    - name: "skills"
+      type: "array[string]"
+
+# =============================================================================
+# INTEGRATION PATTERNS
+# =============================================================================
+
+integration_patterns:
+  - name: "latex_rendering"
+    description: "Render PDF using LaTeX"
+    pattern: |
+      import subprocess
+      import tempfile
+      from jinja2 import Environment, FileSystemLoader
+      
+      async def render_latex_pdf(template_path: str, data: dict) -> bytes:
+          # Load and render template
+          env = Environment(loader=FileSystemLoader('templates'))
+          template = env.get_template(template_path)
+          latex_content = template.render(**data)
+          
+          # Write to temp file and compile
+          with tempfile.TemporaryDirectory() as tmpdir:
+              tex_file = Path(tmpdir) / "resume.tex"
+              tex_file.write_text(latex_content)
+              
+              # Run pdflatex
+              result = subprocess.run(
+                  ["pdflatex", "-interaction=nonstopmode", str(tex_file)],
+                  cwd=tmpdir,
+                  capture_output=True,
+                  timeout=60,
+              )
+              
+              if result.returncode != 0:
+                  raise RenderError(result.stderr.decode())
+              
+              pdf_file = Path(tmpdir) / "resume.pdf"
+              return pdf_file.read_bytes()
+              
+  - name: "weasyprint_rendering"
+    description: "Render PDF using WeasyPrint (HTML)"
+    pattern: |
+      from weasyprint import HTML
+      from jinja2 import Environment, FileSystemLoader
+      
+      async def render_html_pdf(template_path: str, data: dict) -> bytes:
+          env = Environment(loader=FileSystemLoader('templates'))
+          template = env.get_template(template_path)
+          html_content = template.render(**data)
+          
+          pdf_bytes = HTML(string=html_content).write_pdf()
+          return pdf_bytes
+          
+  - name: "s3_upload"
+    description: "Upload to S3 with signed URL"
+    pattern: |
+      import boto3
+      from datetime import datetime, timedelta
+      
+      async def upload_and_get_url(
+          content: bytes,
+          filename: str,
+          content_type: str = "application/pdf"
+      ) -> tuple[str, datetime]:
+          s3 = boto3.client(
+              's3',
+              endpoint_url=settings.S3_ENDPOINT,
+              aws_access_key_id=settings.S3_ACCESS_KEY,
+              aws_secret_access_key=settings.S3_SECRET_KEY,
+          )
+          
+          key = f"exports/{datetime.utcnow().strftime('%Y/%m/%d')}/{filename}"
+          
+          s3.put_object(
+              Bucket=settings.S3_BUCKET,
+              Key=key,
+              Body=content,
+              ContentType=content_type,
+          )
+          
+          url = s3.generate_presigned_url(
+              'get_object',
+              Params={'Bucket': settings.S3_BUCKET, 'Key': key},
+              ExpiresIn=settings.SIGNED_URL_EXPIRY_HOURS * 3600,
+          )
+          
+          expires_at = datetime.utcnow() + timedelta(hours=settings.SIGNED_URL_EXPIRY_HOURS)
+          return url, expires_at
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+
+troubleshooting:
+  - symptom: "LaTeX compilation fails"
+    causes:
+      - "Missing LaTeX packages"
+      - "Invalid characters in template"
+      - "Syntax error in template"
+    solutions:
+      - "Install required texlive packages"
+      - "Escape special LaTeX characters (%, $, &, #, _)"
+      - "Test template manually: pdflatex template.tex"
+      
+  - symptom: "WeasyPrint font issues"
+    causes:
+      - "Fonts not installed in container"
+    solutions:
+      - "Install fonts: apt-get install fonts-liberation"
+      - "Use web-safe fonts in CSS"
+      
+  - symptom: "S3 upload fails"
+    causes:
+      - "Invalid credentials"
+      - "Bucket doesn't exist"
+    solutions:
+      - "Verify S3_ACCESS_KEY and S3_SECRET_KEY"
+      - "Create bucket: aws s3 mb s3://bucket-name"
+
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+
+security:
+  recommendations:
+    - "Sanitize all user input before templating"
+    - "Run LaTeX in restricted mode"
+    - "Use signed URLs with short expiry for downloads"
+    - "Validate file sizes before upload"
+    
+  production_checklist:
+    - "[ ] Input sanitization enabled"
+    - "[ ] LaTeX restricted mode"
+    - "[ ] S3 bucket not public"
+    - "[ ] Signed URL expiry configured"
+    - "[ ] File size limits enforced"

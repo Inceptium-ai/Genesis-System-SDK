@@ -1,0 +1,769 @@
+# ============================================================================
+# Phase 1 — Component Graph Selection
+# ============================================================================
+# Use Case: AI Resume Optimization App (Resumax)
+# Blueprint: C — AI Platform / AI Webapp
+# Experiment ID: UC1-RESUME-OPT
+# Version: 1.0.0
+# Date: 2024-12-12
+# ============================================================================
+
+metadata:
+  use_case: "AI Resume Optimization App"
+  blueprint: "Blueprint C - AI Platform/AI Webapp"
+  experiment_id: "UC1-RESUME-OPT"
+  version: "1.0.0"
+  created_at: "2024-12-12"
+  catalog_version: "v1"
+
+# ============================================================================
+# COMPONENT DEFINITIONS
+# ============================================================================
+
+components:
+  # --------------------------------------------------------------------------
+  # FRONTEND
+  # --------------------------------------------------------------------------
+  frontend:
+    name: "Next.js"
+    version: "14.2.x"
+    category: "frontend"
+    purpose: "Web UI with SSR, streaming support, and API routes"
+    rationale: |
+      - Server-side rendering for SEO on landing/pricing pages
+      - React Server Components for optimal performance
+      - Built-in API routes for BFF pattern
+      - Native streaming support for AI response display
+      - Strong TypeScript support
+    docker_image: "node:20-alpine"
+    ports:
+      - 3000  # Main web server
+    health_check:
+      endpoint: "/health"
+      interval: "30s"
+      timeout: "10s"
+    dependencies:
+      runtime:
+        - "@clerk/nextjs OR next-auth"  # OAuth helper (optional, can use Keycloak directly)
+        - "tailwindcss@3.4.x"
+        - "@tanstack/react-query@5.x"
+        - "zod@3.x"
+      dev:
+        - "typescript@5.x"
+        - "eslint-config-next"
+
+  # --------------------------------------------------------------------------
+  # IDENTITY & ACCESS
+  # --------------------------------------------------------------------------
+  keycloak:
+    name: "Keycloak"
+    version: "24.0.x"
+    category: "identity"
+    purpose: "OIDC identity provider with OAuth 2.0, SSO, and RBAC"
+    rationale: |
+      - Enterprise-grade authentication
+      - Built-in Google/Microsoft OAuth configuration
+      - Role-based access control (RBAC)
+      - Self-hosted, no vendor lock-in
+      - Admin console for user management
+    docker_image: "quay.io/keycloak/keycloak:24.0"
+    ports:
+      - 8080  # Admin console + auth endpoints
+    health_check:
+      endpoint: "/health/ready"
+      interval: "30s"
+      timeout: "10s"
+    config_required:
+      - KEYCLOAK_ADMIN           # Admin username
+      - KEYCLOAK_ADMIN_PASSWORD  # Admin password
+      - KC_DB                    # Database type (postgres)
+      - KC_DB_URL                # Database connection URL
+      - KC_DB_USERNAME           # Database username
+      - KC_DB_PASSWORD           # Database password
+      - KC_HOSTNAME              # External hostname
+    realms:
+      - name: "resumax"
+        clients:
+          - id: "resumax-web"
+            type: "public"
+            redirect_uris:
+              - "http://localhost:3000/*"
+              - "https://app.resumax.io/*"
+        roles:
+          - "user"
+          - "admin"
+        identity_providers:
+          - "google"
+          - "microsoft"
+
+  # --------------------------------------------------------------------------
+  # DATABASE
+  # --------------------------------------------------------------------------
+  postgres:
+    name: "PostgreSQL"
+    version: "16.x"
+    category: "database"
+    purpose: "Primary relational database for all application data"
+    rationale: |
+      - Battle-tested reliability
+      - JSONB support for flexible schemas
+      - pgvector extension for future embeddings
+      - Strong tooling ecosystem
+    docker_image: "postgres:16-alpine"
+    ports:
+      - 5432
+    health_check:
+      command: "pg_isready -U postgres"
+      interval: "10s"
+      timeout: "5s"
+    config_required:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+    volumes:
+      - "postgres_data:/var/lib/postgresql/data"
+    extensions:
+      - uuid-ossp
+      - pgcrypto
+    optional_extensions:
+      - pgvector  # For semantic search (P2)
+
+  # --------------------------------------------------------------------------
+  # CACHE & QUEUE
+  # --------------------------------------------------------------------------
+  redis:
+    name: "Redis"
+    version: "7.2.x"
+    category: "cache"
+    purpose: "Caching, session storage, and rate limiting"
+    rationale: |
+      - Fast in-memory data store
+      - Session storage for auth
+      - Rate limiting implementation
+      - Pub/sub for real-time updates (optional)
+    docker_image: "redis:7.2-alpine"
+    ports:
+      - 6379
+    health_check:
+      command: "redis-cli ping"
+      interval: "10s"
+      timeout: "5s"
+    config_required:
+      - REDIS_PASSWORD  # Optional but recommended
+    volumes:
+      - "redis_data:/data"
+    features_used:
+      - "Key-value caching"
+      - "Session storage"
+      - "Rate limiting (sliding window)"
+
+  # --------------------------------------------------------------------------
+  # AI SERVICE
+  # --------------------------------------------------------------------------
+  ai_service:
+    name: "FastAPI AI Service"
+    version: "custom"
+    category: "ai-runtime"
+    purpose: "AI pipeline service for resume optimization and analysis"
+    rationale: |
+      - High-performance async Python framework
+      - Native streaming response support
+      - Easy LangChain/LangGraph integration
+      - Strong typing with Pydantic
+    docker_image: "python:3.11-slim"
+    ports:
+      - 8000  # Main API
+    health_check:
+      endpoint: "/health"
+      interval: "30s"
+      timeout: "10s"
+    config_required:
+      - OPENROUTER_API_KEY       # AI provider
+      - OPENROUTER_MODEL         # anthropic/claude-haiku-4.5
+      - DATABASE_URL             # Postgres connection
+      - REDIS_URL                # Redis connection
+      - LANGFUSE_SECRET_KEY      # LLM observability
+      - LANGFUSE_PUBLIC_KEY
+      - TEMPORAL_HOST            # Workflow engine
+    dependencies:
+      runtime:
+        - "fastapi>=0.109.0"
+        - "uvicorn[standard]>=0.27.0"
+        - "langchain>=0.1.0"
+        - "langgraph>=0.0.40"
+        - "langfuse>=2.0.0"
+        - "openai>=1.0.0"          # OpenRouter uses OpenAI-compatible API
+        - "pydantic>=2.0.0"
+        - "sqlalchemy>=2.0.0"
+        - "redis>=5.0.0"
+        - "python-multipart"        # File uploads
+        - "pypdf2"                  # PDF parsing
+        - "python-docx"             # DOCX parsing
+        - "opentelemetry-api"
+        - "opentelemetry-sdk"
+        - "opentelemetry-instrumentation-fastapi"
+    pipelines:
+      - name: "optimize_resume"
+        type: "langgraph"
+        description: "Multi-step resume optimization workflow"
+        steps:
+          - "parse_resume"
+          - "analyze_job_description"
+          - "identify_gaps"
+          - "rewrite_bullets"
+          - "generate_output"
+      - name: "roast_resume"
+        type: "single-pass"
+        description: "Resume analysis and scoring"
+        steps:
+          - "parse_resume"
+          - "analyze_content"
+          - "generate_score_and_feedback"
+      - name: "generate_cover_letter"
+        type: "single-pass"
+        description: "Tailored cover letter generation"
+        steps:
+          - "extract_key_points"
+          - "generate_letter"
+
+  # --------------------------------------------------------------------------
+  # WORKFLOW ENGINE
+  # --------------------------------------------------------------------------
+  temporal:
+    name: "Temporal"
+    version: "1.23.x"
+    category: "workflow"
+    purpose: "Durable workflow orchestration for AI pipelines"
+    rationale: |
+      - Automatic retries and failure recovery
+      - Workflow state persistence
+      - Long-running operation support
+      - Built-in observability
+    docker_image: "temporalio/auto-setup:1.23"
+    ports:
+      - 7233  # gRPC frontend
+      - 8088  # Web UI
+    health_check:
+      endpoint: "/health"
+      interval: "30s"
+      timeout: "10s"
+    config_required:
+      - DB                       # postgres
+      - DB_PORT                  # 5432
+      - POSTGRES_USER
+      - POSTGRES_PWD
+      - POSTGRES_SEEDS           # host
+    volumes:
+      - "temporal_data:/var/lib/temporal"
+    workflows:
+      - name: "ResumeOptimizationWorkflow"
+        description: "Full resume optimization with retry logic"
+        activities:
+          - "ParseResumeActivity"
+          - "AnalyzeJDActivity"
+          - "OptimizeBulletsActivity"
+          - "SaveResultActivity"
+        timeout: "5m"
+        retry_policy:
+          max_attempts: 3
+          backoff_coefficient: 2
+      - name: "ExportWorkflow"
+        description: "PDF/DOCX generation workflow"
+        activities:
+          - "PrepareDataActivity"
+          - "RenderTemplateActivity"
+          - "UploadFileActivity"
+        timeout: "2m"
+
+  # --------------------------------------------------------------------------
+  # PDF GENERATION SERVICE
+  # --------------------------------------------------------------------------
+  pdf_service:
+    name: "PDF Generator Service"
+    version: "custom"
+    category: "document-generation"
+    purpose: "Modular PDF/DOCX generation from resume data"
+    rationale: |
+      - Decoupled as separate service for modularity
+      - Can be swapped for different implementations
+      - LaTeX-based for professional quality
+      - Agent-friendly: clear API contract
+    docker_image: "python:3.11-slim"  # With texlive installed
+    ports:
+      - 8001  # API endpoint
+    health_check:
+      endpoint: "/health"
+      interval: "30s"
+      timeout: "10s"
+    config_required:
+      - S3_BUCKET                # Output storage
+      - S3_ACCESS_KEY
+      - S3_SECRET_KEY
+      - S3_ENDPOINT              # Optional for MinIO
+    dependencies:
+      runtime:
+        - "fastapi>=0.109.0"
+        - "uvicorn>=0.27.0"
+        - "jinja2>=3.1.0"         # Template engine
+        - "weasyprint>=60.0"      # HTML to PDF (alternative to LaTeX)
+        - "python-docx>=1.1.0"    # DOCX generation
+        - "boto3>=1.34.0"         # S3 upload
+    apt_packages:
+      - "texlive-latex-base"
+      - "texlive-fonts-recommended"
+      - "texlive-latex-extra"
+      - "latexmk"
+    templates:
+      - id: "professional-classic"
+        name: "Professional Classic"
+        type: "latex"
+        file: "templates/professional-classic.tex"
+      - id: "modern-minimal"
+        name: "Modern Minimal"
+        type: "latex"
+        file: "templates/modern-minimal.tex"
+      - id: "ats-optimized"
+        name: "ATS Optimized"
+        type: "html"  # WeasyPrint
+        file: "templates/ats-optimized.html"
+    api:
+      - method: "POST"
+        path: "/render"
+        input:
+          resume_data: "object"
+          template_id: "string"
+          format: "enum[pdf, docx]"
+        output:
+          file_url: "string"
+          expires_at: "datetime"
+
+  # --------------------------------------------------------------------------
+  # OBSERVABILITY
+  # --------------------------------------------------------------------------
+  opentelemetry_collector:
+    name: "OpenTelemetry Collector"
+    version: "0.96.x"
+    category: "observability"
+    purpose: "Centralized telemetry collection and export"
+    rationale: |
+      - Vendor-neutral telemetry standard
+      - Single collection point for all services
+      - Flexible export to multiple backends
+    docker_image: "otel/opentelemetry-collector-contrib:0.96.0"
+    ports:
+      - 4317  # OTLP gRPC
+      - 4318  # OTLP HTTP
+      - 8889  # Prometheus metrics
+    config_required:
+      - JAEGER_ENDPOINT
+      - PROMETHEUS_ENDPOINT
+    exports_to:
+      - "jaeger"       # Distributed tracing
+      - "prometheus"   # Metrics
+
+  jaeger:
+    name: "Jaeger"
+    version: "1.54.x"
+    category: "observability"
+    purpose: "Distributed tracing backend and UI"
+    rationale: |
+      - Visual trace analysis
+      - Service dependency mapping
+      - Performance bottleneck identification
+    docker_image: "jaegertracing/all-in-one:1.54"
+    ports:
+      - 16686  # Web UI
+      - 14268  # Accept traces
+    health_check:
+      endpoint: "/"
+      interval: "30s"
+      timeout: "10s"
+
+  prometheus:
+    name: "Prometheus"
+    version: "2.50.x"
+    category: "observability"
+    purpose: "Metrics collection and alerting"
+    docker_image: "prom/prometheus:v2.50.0"
+    ports:
+      - 9090
+    volumes:
+      - "prometheus_data:/prometheus"
+    optional: true  # Can defer to later
+
+  grafana:
+    name: "Grafana"
+    version: "10.3.x"
+    category: "observability"
+    purpose: "Metrics visualization and dashboards"
+    docker_image: "grafana/grafana:10.3.0"
+    ports:
+      - 3001
+    optional: true  # Can defer to later
+
+  langfuse:
+    name: "Langfuse"
+    version: "cloud"
+    category: "observability"
+    purpose: "LLM-specific observability, tracing, and analytics"
+    rationale: |
+      - Purpose-built for LLM applications
+      - Token usage tracking
+      - Prompt versioning
+      - Cost analytics
+    deployment: "cloud"  # Use Langfuse Cloud for simplicity
+    config_required:
+      - LANGFUSE_PUBLIC_KEY
+      - LANGFUSE_SECRET_KEY
+      - LANGFUSE_HOST           # https://cloud.langfuse.com
+
+  # --------------------------------------------------------------------------
+  # BILLING (DEFERRED TO END)
+  # --------------------------------------------------------------------------
+  stripe:
+    name: "Stripe"
+    version: "api-2024-01"
+    category: "billing"
+    purpose: "Payment processing, subscriptions, and billing portal"
+    deployment: "external-api"
+    rationale: |
+      - Industry standard for SaaS billing
+      - Checkout sessions for easy integration
+      - Customer portal for self-service
+      - Webhook-based status updates
+    config_required:
+      - STRIPE_SECRET_KEY
+      - STRIPE_PUBLISHABLE_KEY
+      - STRIPE_WEBHOOK_SECRET
+      - STRIPE_PRICE_PRO_MONTHLY     # Price ID for Pro plan
+      - STRIPE_PRICE_LIFETIME        # Price ID for Lifetime
+    products:
+      - name: "Free"
+        price: 0
+        features:
+          - "1 resume optimization"
+          - "1 resume roast"
+          - "Basic templates"
+      - name: "Pro"
+        price_monthly: 20
+        stripe_price_id: "${STRIPE_PRICE_PRO_MONTHLY}"
+        features:
+          - "Unlimited optimizations"
+          - "Unlimited roasts"
+          - "Cover letter generation"
+          - "All templates"
+          - "Priority support"
+      - name: "Lifetime"
+        price_onetime: 99
+        stripe_price_id: "${STRIPE_PRICE_LIFETIME}"
+        features:
+          - "All Pro features"
+          - "Lifetime access"
+          - "Early access to new features"
+    defer_testing: true
+
+# ============================================================================
+# INTEGRATION EDGES (Component Communication Graph)
+# ============================================================================
+
+integrations:
+  # Frontend → Backend Services
+  - from: "frontend"
+    to: "keycloak"
+    protocol: "OIDC/OAuth2"
+    purpose: "User authentication"
+    notes: "Direct browser redirect for login, token exchange"
+
+  - from: "frontend"
+    to: "ai_service"
+    protocol: "HTTP/REST + SSE"
+    purpose: "AI operations (optimize, roast, cover letter)"
+    notes: "SSE for streaming responses during optimization"
+
+  - from: "frontend"
+    to: "pdf_service"
+    protocol: "HTTP/REST"
+    purpose: "Document export requests"
+    notes: "Async job submission, polling for status"
+
+  # AI Service → Dependencies
+  - from: "ai_service"
+    to: "postgres"
+    protocol: "PostgreSQL"
+    purpose: "Data persistence"
+    notes: "SQLAlchemy ORM, connection pooling"
+
+  - from: "ai_service"
+    to: "redis"
+    protocol: "Redis"
+    purpose: "Caching, rate limiting"
+    notes: "Cache JD analysis, rate limit per user"
+
+  - from: "ai_service"
+    to: "temporal"
+    protocol: "gRPC"
+    purpose: "Workflow orchestration"
+    notes: "Submit and track optimization workflows"
+
+  - from: "ai_service"
+    to: "openrouter"
+    protocol: "HTTP/REST (OpenAI-compatible)"
+    purpose: "LLM inference"
+    notes: "Claude Haiku 4.5 via OpenRouter"
+    external: true
+
+  - from: "ai_service"
+    to: "langfuse"
+    protocol: "HTTP/REST"
+    purpose: "LLM observability"
+    notes: "Trace all LLM calls"
+    external: true
+
+  # PDF Service → Dependencies
+  - from: "pdf_service"
+    to: "s3"
+    protocol: "S3 API"
+    purpose: "File storage"
+    notes: "Store generated PDFs, signed URLs for download"
+    external: true  # Or MinIO locally
+
+  # Keycloak → Database
+  - from: "keycloak"
+    to: "postgres"
+    protocol: "PostgreSQL"
+    purpose: "Identity data storage"
+    notes: "Separate database/schema from app data"
+
+  # Temporal → Database
+  - from: "temporal"
+    to: "postgres"
+    protocol: "PostgreSQL"
+    purpose: "Workflow state persistence"
+    notes: "Separate database from app data"
+
+  # Observability Flows
+  - from: "ai_service"
+    to: "opentelemetry_collector"
+    protocol: "OTLP (gRPC)"
+    purpose: "Telemetry export"
+
+  - from: "frontend"
+    to: "opentelemetry_collector"
+    protocol: "OTLP (HTTP)"
+    purpose: "Frontend telemetry"
+
+  - from: "pdf_service"
+    to: "opentelemetry_collector"
+    protocol: "OTLP (gRPC)"
+    purpose: "Telemetry export"
+
+  - from: "opentelemetry_collector"
+    to: "jaeger"
+    protocol: "Jaeger"
+    purpose: "Trace storage"
+
+  # Billing (Deferred)
+  - from: "frontend"
+    to: "stripe"
+    protocol: "Stripe.js + HTTP"
+    purpose: "Checkout sessions"
+    external: true
+    deferred: true
+
+  - from: "ai_service"
+    to: "stripe"
+    protocol: "HTTP/REST"
+    purpose: "Webhook handling, subscription verification"
+    external: true
+    deferred: true
+
+# ============================================================================
+# CONFIGURATION MATRIX
+# ============================================================================
+
+config_inputs:
+  # Required for all environments
+  required:
+    # Database
+    - name: "DATABASE_URL"
+      description: "PostgreSQL connection string"
+      format: "postgresql://user:pass@host:5432/resumax"
+      
+    - name: "REDIS_URL"
+      description: "Redis connection string"
+      format: "redis://:password@host:6379/0"
+      
+    # Keycloak
+    - name: "KEYCLOAK_URL"
+      description: "Keycloak base URL"
+      format: "http://localhost:8080"
+      
+    - name: "KEYCLOAK_REALM"
+      description: "Keycloak realm name"
+      default: "resumax"
+      
+    - name: "KEYCLOAK_CLIENT_ID"
+      description: "OIDC client ID"
+      default: "resumax-web"
+      
+    - name: "KEYCLOAK_CLIENT_SECRET"
+      description: "OIDC client secret (for confidential clients)"
+      sensitive: true
+      
+    # AI
+    - name: "OPENROUTER_API_KEY"
+      description: "OpenRouter API key"
+      sensitive: true
+      
+    - name: "OPENROUTER_MODEL"
+      description: "Model identifier"
+      default: "anthropic/claude-haiku-4.5"
+      
+    # Observability
+    - name: "LANGFUSE_PUBLIC_KEY"
+      description: "Langfuse public key"
+      sensitive: true
+      
+    - name: "LANGFUSE_SECRET_KEY"
+      description: "Langfuse secret key"
+      sensitive: true
+
+  # Optional / Environment-specific
+  optional:
+    - name: "S3_BUCKET"
+      description: "S3 bucket for file storage"
+      default: "resumax-exports"
+      
+    - name: "S3_ENDPOINT"
+      description: "S3-compatible endpoint (for MinIO)"
+      
+    - name: "STRIPE_SECRET_KEY"
+      description: "Stripe secret key"
+      sensitive: true
+      deferred: true
+      
+    - name: "STRIPE_WEBHOOK_SECRET"
+      description: "Stripe webhook signing secret"
+      sensitive: true
+      deferred: true
+
+# ============================================================================
+# OUTPUT CONTRACTS
+# ============================================================================
+
+output_contracts:
+  # What this system provides to consumers
+  
+  api_contract:
+    description: "REST API for resume operations"
+    openapi_spec: "./specs/openapi.yaml"
+    base_url: "https://api.resumax.io"
+    authentication: "Bearer token (Keycloak JWT)"
+    rate_limits:
+      free: "10 requests/minute"
+      pro: "100 requests/minute"
+      
+  webhook_contract:
+    description: "Outbound webhooks for async operations"
+    events:
+      - "optimization.completed"
+      - "optimization.failed"
+      - "export.ready"
+    format: "JSON"
+    retry_policy: "3 attempts, exponential backoff"
+    
+  data_contract:
+    description: "Database schema for resume data"
+    migration_tool: "Alembic"
+    schema_file: "./schemas/database.sql"
+    
+  observability_contract:
+    description: "Telemetry data exported"
+    traces: "OpenTelemetry format"
+    metrics: "Prometheus format"
+    llm_traces: "Langfuse format"
+
+# ============================================================================
+# DEPLOYMENT TOPOLOGY
+# ============================================================================
+
+deployment:
+  local:
+    description: "Local development with Docker Compose"
+    compose_file: "./docker-compose.yml"
+    services:
+      - frontend
+      - ai_service
+      - pdf_service
+      - keycloak
+      - postgres
+      - redis
+      - temporal
+      - jaeger
+    external_services:
+      - openrouter
+      - langfuse_cloud
+      
+  staging:
+    description: "Staging environment"
+    platform: "Kubernetes"
+    namespace: "resumax-staging"
+    
+  production:
+    description: "Production deployment"
+    platform: "Kubernetes"
+    namespace: "resumax-prod"
+    replicas:
+      frontend: 2
+      ai_service: 3
+      pdf_service: 2
+
+# ============================================================================
+# CATALOG COMPONENT SUMMARY
+# ============================================================================
+
+catalog_summary:
+  total_components: 12
+  by_category:
+    frontend: 1
+    identity: 1
+    database: 1
+    cache: 1
+    ai-runtime: 1
+    workflow: 1
+    document-generation: 1
+    observability: 5
+    billing: 1
+  
+  catalog_components:  # From approved catalog
+    - "Keycloak"
+    - "PostgreSQL"
+    - "Redis"
+    - "FastAPI"
+    - "Temporal"
+    - "OpenTelemetry"
+    
+  custom_components:  # Built for this use case
+    - "Next.js Frontend"
+    - "PDF Generator Service"
+    
+  external_services:
+    - "OpenRouter (Claude Haiku 4.5)"
+    - "Langfuse Cloud"
+    - "Stripe"
+    - "S3/MinIO"
+
+# ============================================================================
+# NEXT STEPS
+# ============================================================================
+
+next_phase:
+  phase: 2
+  name: "Integration Playbook"
+  deliverables:
+    - "Docker Compose configuration"
+    - "Local dev setup instructions"
+    - "Secrets management strategy"
+    - "Minimal configs for each component"
+    - "Bootstrap commands"
+    - "Common failure modes documentation"

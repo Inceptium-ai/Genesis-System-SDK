@@ -1,0 +1,146 @@
+# Embedded Auth Component Graph
+# SuperTokens-based authentication for consumer SaaS apps
+
+graph:
+  name: embedded-auth-demo
+  description: |
+    Minimal app demonstrating embedded authentication with SuperTokens.
+    Pattern for Genesis agents to add first-party auth to consumer apps.
+
+components:
+  # ============================================
+  # INFRASTRUCTURE
+  # ============================================
+  
+  postgres:
+    type: database
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: supertokens
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  supertokens-core:
+    type: auth-server
+    image: supertokens/supertokens-postgresql:9.0
+    ports:
+      - "3567:3567"
+    environment:
+      POSTGRESQL_USER: postgres
+      POSTGRESQL_PASSWORD: postgres
+      POSTGRESQL_DATABASE_NAME: supertokens
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3567/hello"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # APPLICATION SERVICES
+  # ============================================
+
+  backend:
+    type: api-server
+    build: ./services/backend
+    ports:
+      - "8000:8000"
+    environment:
+      SUPERTOKENS_CONNECTION_URI: http://supertokens-core:3567
+      APP_NAME: EmbeddedAuthDemo
+      API_DOMAIN: http://localhost:8000
+      WEBSITE_DOMAIN: http://localhost:5173
+    depends_on:
+      supertokens-core:
+        condition: service_healthy
+    provides:
+      - /auth/* (SuperTokens auth routes)
+      - /api/* (Protected API routes)
+
+  frontend:
+    type: spa
+    build: ./services/frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_SUPERTOKENS_APP_NAME: EmbeddedAuthDemo
+    depends_on:
+      - backend
+
+# ============================================
+# COMPONENT CONNECTIONS
+# ============================================
+
+connections:
+  - from: frontend
+    to: backend
+    protocol: HTTP
+    purpose: API calls + auth cookies
+
+  - from: backend
+    to: supertokens-core
+    protocol: HTTP
+    purpose: Session verification, user management
+
+  - from: supertokens-core
+    to: postgres
+    protocol: PostgreSQL
+    purpose: User and session storage
+
+# ============================================
+# FEATURE CONFIGURATION
+# ============================================
+
+auth_features:
+  email_password:
+    enabled: true
+    sign_up: true
+    sign_in: true
+    
+  session:
+    enabled: true
+    cookie_domain: localhost
+    cookie_secure: false  # true in production
+    cookie_same_site: lax
+    
+  password_reset:
+    enabled: true
+    email_delivery:
+      method: console  # Use SMTP in production
+      
+  email_verification:
+    enabled: false  # Enable for production
+    
+  social_login:
+    enabled: false  # Phase 2
+    providers: []
+
+# ============================================
+# VOLUMES
+# ============================================
+
+volumes:
+  postgres_data:
+    driver: local
+
+# ============================================
+# NETWORKS
+# ============================================
+
+networks:
+  default:
+    name: embedded-auth-network

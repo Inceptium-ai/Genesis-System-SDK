@@ -1,0 +1,395 @@
+# =============================================================================
+# RESUMAX - Docker Compose Configuration
+# =============================================================================
+# Blueprint C: AI Platform / AI Webapp
+# Use Case: AI Resume Optimization App
+# =============================================================================
+
+name: resumax
+
+services:
+  # ---------------------------------------------------------------------------
+  # DATABASE LAYER
+  # ---------------------------------------------------------------------------
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: resumax-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resumax}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdevpassword123}
+      POSTGRES_DB: ${POSTGRES_DB:-resumax}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resumax}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: resumax-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-localredis} --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-localredis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # ---------------------------------------------------------------------------
+  # IDENTITY & ACCESS
+  # ---------------------------------------------------------------------------
+  
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: resumax-keycloak
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-resumax}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-localdevpassword123}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: edge
+    volumes:
+      - ./config/keycloak/resumax-realm.json:/opt/keycloak/data/import/resumax-realm.json:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo OK"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # ---------------------------------------------------------------------------
+  # WORKFLOW ENGINE
+  # ---------------------------------------------------------------------------
+  
+  temporal:
+    image: temporalio/auto-setup:1.23.0
+    container_name: resumax-temporal
+    environment:
+      - DB=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-resumax}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-localdevpassword123}
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    volumes:
+      - ./config/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    ports:
+      - "7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  temporal-ui:
+    image: temporalio/ui:2.22.0
+    container_name: resumax-temporal-ui
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8088
+      - TEMPORAL_UI_PORT=8080
+    ports:
+      - "8088:8080"
+    depends_on:
+      - temporal
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # ---------------------------------------------------------------------------
+  # APPLICATION SERVICES
+  # ---------------------------------------------------------------------------
+  
+  ai-service:
+    build:
+      context: ../../services/ai-service
+      dockerfile: Dockerfile
+    container_name: resumax-ai-service
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-resumax}:${POSTGRES_PASSWORD:-localdevpassword123}@postgres:5432/${POSTGRES_DB:-resumax}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-localredis}@redis:6379/0
+      
+      # AI Provider
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-4.5}
+      
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      
+      # Observability
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: resumax-ai-service
+      
+      # Keycloak
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-resumax}
+      
+      # App
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - resumax-network
+    # For development with hot reload:
+    # volumes:
+    #   - ../../services/ai-service:/app
+
+  pdf-service:
+    build:
+      context: ../../services/pdf-service
+      dockerfile: Dockerfile
+    container_name: resumax-pdf-service
+    environment:
+      # Storage
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-resumax-exports}
+      
+      # Observability
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: resumax-pdf-service
+      
+      # App
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8001:8001"
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_KEYCLOAK_URL: ${NEXT_PUBLIC_KEYCLOAK_URL:-http://localhost:8080}
+        NEXT_PUBLIC_KEYCLOAK_REALM: ${KEYCLOAK_REALM:-resumax}
+        NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-resumax-web}
+    container_name: resumax-frontend
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_KEYCLOAK_URL: ${NEXT_PUBLIC_KEYCLOAK_URL:-http://localhost:8080}
+      NEXT_PUBLIC_KEYCLOAK_REALM: ${KEYCLOAK_REALM:-resumax}
+      NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-resumax-web}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - ai-service
+      - keycloak
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # ---------------------------------------------------------------------------
+  # FILE STORAGE (Local S3-compatible)
+  # ---------------------------------------------------------------------------
+  
+  minio:
+    image: minio/minio:latest
+    container_name: resumax-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # Create bucket on startup
+  minio-init:
+    image: minio/mc:latest
+    container_name: resumax-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set resumax http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin};
+      mc mb --ignore-existing resumax/${S3_BUCKET:-resumax-exports};
+      mc anonymous set download resumax/${S3_BUCKET:-resumax-exports};
+      exit 0;
+      "
+    networks:
+      - resumax-network
+
+  # ---------------------------------------------------------------------------
+  # OBSERVABILITY
+  # ---------------------------------------------------------------------------
+  
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: resumax-otel-collector
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: resumax-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # UI
+      - "14250:14250"  # gRPC
+      - "6831:6831/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - resumax-network
+
+  # Optional: Prometheus & Grafana (uncomment to enable)
+  # prometheus:
+  #   image: prom/prometheus:v2.50.0
+  #   container_name: resumax-prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #   volumes:
+  #     - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   restart: unless-stopped
+  #   networks:
+  #     - resumax-network
+
+  # grafana:
+  #   image: grafana/grafana:10.3.0
+  #   container_name: resumax-grafana
+  #   environment:
+  #     - GF_SECURITY_ADMIN_USER=admin
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+  #   ports:
+  #     - "3001:3000"
+  #   depends_on:
+  #     - prometheus
+  #   restart: unless-stopped
+  #   networks:
+  #     - resumax-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+
+volumes:
+  postgres_data:
+    name: resumax-postgres-data
+  redis_data:
+    name: resumax-redis-data
+  minio_data:
+    name: resumax-minio-data
+  # prometheus_data:
+  #   name: resumax-prometheus-data
+  # grafana_data:
+  #   name: resumax-grafana-data
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+
+networks:
+  resumax-network:
+    name: resumax-network
+    driver: bridge

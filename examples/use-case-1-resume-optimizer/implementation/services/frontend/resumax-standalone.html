@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resumax - AI Resume Optimizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 1s linear infinite; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
+  <div class="container mx-auto px-4 py-8 max-w-4xl">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <div class="flex items-center justify-center gap-3 mb-2">
+        <span class="text-4xl">🔥</span>
+        <h1 class="text-4xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
+          Resumax
+        </h1>
+      </div>
+      <p class="text-gray-400 text-lg">Get your resume brutally roasted by AI</p>
+    </div>
+
+    <!-- Input Section -->
+    <div class="bg-gray-800/50 rounded-xl p-6 mb-6 border border-gray-700">
+      <label class="block text-sm font-medium text-gray-300 mb-2">
+        Paste your resume text
+      </label>
+      <textarea
+        id="resumeInput"
+        placeholder="John Doe
+Software Engineer
+
+Experience:
+- Did coding stuff at Company A
+- Made websites
+- Fixed bugs sometimes
+
+Education:
+- BS Computer Science"
+        class="w-full h-64 bg-gray-900/50 border border-gray-600 rounded-lg p-4 text-gray-100 placeholder-gray-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
+      ></textarea>
+      
+      <button
+        id="roastBtn"
+        onclick="roastResume()"
+        class="mt-4 w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 flex items-center justify-center gap-2"
+      >
+        <span id="btnText">🔥 Roast My Resume</span>
+        <svg id="spinner" class="hidden w-5 h-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Error -->
+    <div id="errorBox" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-6 flex items-center gap-3">
+      <span class="text-red-500">⚠️</span>
+      <p id="errorText" class="text-red-300"></p>
+    </div>
+
+    <!-- Results -->
+    <div id="resultsBox" class="hidden bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+      <!-- Score -->
+      <div class="text-center mb-6">
+        <div id="emoji" class="text-6xl mb-2">💀</div>
+        <div id="score" class="text-5xl font-bold text-red-500">0/100</div>
+        <p class="text-gray-400 mt-1">Resume Score</p>
+      </div>
+
+      <!-- Feedback -->
+      <div class="border-t border-gray-700 pt-6">
+        <h3 class="flex items-center gap-2 text-lg font-semibold mb-4">
+          ✨ Feedback
+        </h3>
+        <ul id="feedbackList" class="space-y-3">
+        </ul>
+      </div>
+
+      <!-- Model Info -->
+      <div class="mt-6 pt-4 border-t border-gray-700 text-center">
+        <span id="modelUsed" class="text-xs text-gray-500">
+          Powered by AI
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = 'http://localhost:8000';
+    
+    async function roastResume() {
+      const resumeText = document.getElementById('resumeInput').value;
+      const btn = document.getElementById('roastBtn');
+      const btnText = document.getElementById('btnText');
+      const spinner = document.getElementById('spinner');
+      const errorBox = document.getElementById('errorBox');
+      const resultsBox = document.getElementById('resultsBox');
+      
+      // Validate
+      if (!resumeText.trim()) {
+        showError('Please paste your resume first!');
+        return;
+      }
+      
+      // Loading state
+      btn.disabled = true;
+      btnText.textContent = 'Roasting...';
+      spinner.classList.remove('hidden');
+      errorBox.classList.add('hidden');
+      resultsBox.classList.add('hidden');
+      
+      try {
+        const response = await fetch(`${API_URL}/api/ai/roast`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resume_text: resumeText })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        showResults(data);
+      } catch (err) {
+        showError(err.message || 'Something went wrong');
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = '🔥 Roast My Resume';
+        spinner.classList.add('hidden');
+      }
+    }
+    
+    function showError(message) {
+      document.getElementById('errorBox').classList.remove('hidden');
+      document.getElementById('errorText').textContent = message;
+    }
+    
+    function showResults(data) {
+      const resultsBox = document.getElementById('resultsBox');
+      const score = data.score;
+      
+      // Set emoji
+      let emoji = '💀';
+      if (score >= 80) emoji = '🔥';
+      else if (score >= 60) emoji = '👍';
+      else if (score >= 40) emoji = '😬';
+      document.getElementById('emoji').textContent = emoji;
+      
+      // Set score color
+      const scoreEl = document.getElementById('score');
+      scoreEl.textContent = `${score}/100`;
+      if (score >= 80) scoreEl.className = 'text-5xl font-bold text-green-500';
+      else if (score >= 60) scoreEl.className = 'text-5xl font-bold text-yellow-500';
+      else if (score >= 40) scoreEl.className = 'text-5xl font-bold text-orange-500';
+      else scoreEl.className = 'text-5xl font-bold text-red-500';
+      
+      // Set feedback
+      const feedbackList = document.getElementById('feedbackList');
+      feedbackList.innerHTML = data.feedback.map((item, i) => `
+        <li class="flex gap-3 text-gray-300">
+          <span class="text-orange-500 font-bold">${i + 1}.</span>
+          <span>${item}</span>
+        </li>
+      `).join('');
+      
+      // Set model
+      document.getElementById('modelUsed').textContent = `Powered by ${data.model_used}`;
+      
+      // Show
+      resultsBox.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>

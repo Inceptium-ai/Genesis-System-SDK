@@ -1,0 +1,517 @@
+# =============================================================================
+# Component Contract: FastAPI AI Service
+# =============================================================================
+# Genesis Component Catalog - AI Runtime
+# Version: 1.0.0
+# =============================================================================
+
+component:
+  name: "FastAPI AI Service"
+  category: "ai-runtime"
+  version: "custom"
+  catalog_id: "fastapi-ai-runtime"
+  description: "High-performance async Python API for AI pipelines with LangGraph integration"
+  
+  maintainer:
+    team: "AI Platform"
+    contact: "ai-platform@genesis.io"
+    
+  tags:
+    - ai
+    - llm
+    - fastapi
+    - langchain
+    - langgraph
+    - streaming
+
+# =============================================================================
+# INPUT SCHEMA
+# =============================================================================
+
+inputs:
+  required:
+    # AI Provider
+    - name: "OPENROUTER_API_KEY"
+      type: "string"
+      description: "OpenRouter API key for LLM access"
+      sensitive: true
+      
+    - name: "OPENROUTER_MODEL"
+      type: "string"
+      description: "Model identifier (e.g., anthropic/claude-haiku-4.5)"
+      default: "anthropic/claude-haiku-4.5"
+      
+    # Database
+    - name: "DATABASE_URL"
+      type: "string"
+      description: "PostgreSQL connection string"
+      format: "postgresql://user:pass@host:5432/db"
+      sensitive: true
+      
+    - name: "REDIS_URL"
+      type: "string"
+      description: "Redis connection string"
+      format: "redis://:password@host:6379/0"
+      sensitive: true
+      
+    # Observability
+    - name: "LANGFUSE_PUBLIC_KEY"
+      type: "string"
+      description: "Langfuse public key for LLM tracing"
+      sensitive: true
+      
+    - name: "LANGFUSE_SECRET_KEY"
+      type: "string"
+      description: "Langfuse secret key"
+      sensitive: true
+      
+  optional:
+    - name: "LANGFUSE_HOST"
+      type: "string"
+      description: "Langfuse host URL"
+      default: "https://cloud.langfuse.com"
+      
+    - name: "TEMPORAL_HOST"
+      type: "string"
+      description: "Temporal server address"
+      default: "localhost:7233"
+      
+    - name: "TEMPORAL_NAMESPACE"
+      type: "string"
+      description: "Temporal namespace"
+      default: "default"
+      
+    - name: "KEYCLOAK_URL"
+      type: "string"
+      description: "Keycloak URL for token validation"
+      
+    - name: "KEYCLOAK_REALM"
+      type: "string"
+      description: "Keycloak realm name"
+      default: "resumax"
+      
+    - name: "OTEL_EXPORTER_OTLP_ENDPOINT"
+      type: "string"
+      description: "OpenTelemetry collector endpoint"
+      default: "http://localhost:4317"
+      
+    - name: "LOG_LEVEL"
+      type: "enum"
+      values: ["DEBUG", "INFO", "WARNING", "ERROR"]
+      default: "INFO"
+
+# =============================================================================
+# OUTPUT SCHEMA
+# =============================================================================
+
+outputs:
+  endpoints:
+    # Health
+    - name: "health"
+      method: "GET"
+      path: "/health"
+      description: "Health check endpoint"
+      response:
+        status: "string"
+        version: "string"
+        
+    - name: "ready"
+      method: "GET"
+      path: "/health/ready"
+      description: "Readiness check (db, redis, temporal)"
+      
+    # AI Endpoints
+    - name: "optimize_resume"
+      method: "POST"
+      path: "/api/ai/optimize"
+      description: "Start resume optimization workflow"
+      auth: "Bearer JWT"
+      request:
+        resume_id: "uuid"
+        job_description: "string"
+      response:
+        run_id: "uuid"
+        status: "string"
+        
+    - name: "roast_resume"
+      method: "POST"
+      path: "/api/ai/roast"
+      description: "Analyze resume and provide feedback"
+      auth: "Bearer JWT"
+      request:
+        resume_id: "uuid"
+        role_level: "string?"
+      response:
+        run_id: "uuid"
+        status: "string"
+        
+    - name: "generate_cover_letter"
+      method: "POST"
+      path: "/api/ai/cover-letter"
+      description: "Generate tailored cover letter"
+      auth: "Bearer JWT"
+      request:
+        resume_id: "uuid"
+        job_description: "string"
+        company_name: "string?"
+      response:
+        run_id: "uuid"
+        status: "string"
+        
+    - name: "get_run_status"
+      method: "GET"
+      path: "/api/ai/runs/{run_id}"
+      description: "Get optimization run status"
+      auth: "Bearer JWT"
+      response:
+        id: "uuid"
+        status: "enum[pending,running,completed,failed]"
+        result: "object?"
+        error: "string?"
+        
+    - name: "stream_run"
+      method: "GET"
+      path: "/api/ai/runs/{run_id}/stream"
+      description: "SSE stream for real-time updates"
+      auth: "Bearer JWT"
+      response_type: "text/event-stream"
+      
+    # Resume Management
+    - name: "upload_resume"
+      method: "POST"
+      path: "/api/resumes/upload"
+      description: "Upload and parse resume file"
+      auth: "Bearer JWT"
+      content_type: "multipart/form-data"
+      
+    - name: "list_resumes"
+      method: "GET"
+      path: "/api/resumes"
+      description: "List user's resumes"
+      auth: "Bearer JWT"    
+
+# =============================================================================
+# HEALTH CHECKS
+# =============================================================================
+
+health_checks:
+  readiness:
+    endpoint: "/health/ready"
+    method: "GET"
+    expected_status: 200
+    interval: "30s"
+    timeout: "10s"
+    checks:
+      - name: "database"
+        description: "PostgreSQL connection"
+      - name: "redis"
+        description: "Redis connection"
+      - name: "temporal"
+        description: "Temporal server connection"
+        
+  liveness:
+    endpoint: "/health"
+    method: "GET"
+    expected_status: 200
+    interval: "30s"
+    timeout: "5s"
+
+# =============================================================================
+# SMOKE TESTS
+# =============================================================================
+
+smoke_tests:
+  - name: "health_check"
+    description: "Service is running"
+    type: "http"
+    config:
+      url: "http://localhost:8000/health"
+      method: "GET"
+      expected_status: 200
+      
+  - name: "openrouter_connectivity"
+    description: "Can reach OpenRouter API"
+    type: "script"
+    config:
+      script: |
+        curl -s https://openrouter.ai/api/v1/models \
+          -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+          | jq -e '.data | length > 0'
+      expected_exit_code: 0
+      
+  - name: "langfuse_connectivity"
+    description: "Langfuse tracing works"
+    type: "script"
+    config:
+      script: |
+        python -c "
+        from langfuse import Langfuse
+        import os
+        lf = Langfuse()
+        lf.flush()
+        print('OK')
+        "
+      expected_exit_code: 0
+
+# =============================================================================
+# GOLDEN CONFIGURATION
+# =============================================================================
+
+golden_config:
+  description: "Recommended configuration for Blueprint C (AI Webapp)"
+  
+  dockerfile: |
+    FROM python:3.11-slim
+    
+    WORKDIR /app
+    
+    # Install system dependencies
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
+    
+    # Install Python dependencies
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    
+    # Copy application
+    COPY . .
+    
+    # Create non-root user
+    RUN useradd -m appuser && chown -R appuser:appuser /app
+    USER appuser
+    
+    EXPOSE 8000
+    
+    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    
+  requirements: |
+    # Web Framework
+    fastapi>=0.109.0
+    uvicorn[standard]>=0.27.0
+    python-multipart>=0.0.6
+    
+    # AI/LLM
+    langchain>=0.1.0
+    langgraph>=0.0.40
+    langfuse>=2.0.0
+    openai>=1.0.0
+    
+    # Database
+    sqlalchemy>=2.0.0
+    asyncpg>=0.29.0
+    alembic>=1.13.0
+    
+    # Cache
+    redis>=5.0.0
+    
+    # Workflow
+    temporalio>=1.4.0
+    
+    # File Processing
+    pypdf2>=3.0.0
+    python-docx>=1.1.0
+    
+    # Validation
+    pydantic>=2.0.0
+    pydantic-settings>=2.0.0
+    
+    # Auth
+    python-jose[cryptography]>=3.3.0
+    
+    # Observability
+    opentelemetry-api>=1.22.0
+    opentelemetry-sdk>=1.22.0
+    opentelemetry-instrumentation-fastapi>=0.43b0
+    opentelemetry-exporter-otlp>=1.22.0
+    
+    # Testing
+    pytest>=8.0.0
+    pytest-asyncio>=0.23.0
+    httpx>=0.26.0
+
+  project_structure: |
+    services/ai-service/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── alembic.ini
+    ├── app/
+    │   ├── __init__.py
+    │   ├── main.py              # FastAPI app entrypoint
+    │   ├── config.py            # Settings via pydantic-settings
+    │   ├── dependencies.py      # Dependency injection
+    │   │
+    │   ├── api/
+    │   │   ├── __init__.py
+    │   │   ├── health.py        # Health endpoints
+    │   │   ├── resumes.py       # Resume CRUD
+    │   │   ├── ai.py            # AI operations
+    │   │   └── auth.py          # Token validation
+    │   │
+    │   ├── models/
+    │   │   ├── __init__.py
+    │   │   ├── database.py      # SQLAlchemy models
+    │   │   └── schemas.py       # Pydantic schemas
+    │   │
+    │   ├── services/
+    │   │   ├── __init__.py
+    │   │   ├── resume_parser.py # PDF/DOCX parsing
+    │   │   ├── optimizer.py     # LangGraph optimization
+    │   │   └── roaster.py       # Resume roast logic
+    │   │
+    │   ├── workflows/
+    │   │   ├── __init__.py
+    │   │   ├── optimization.py  # Temporal workflow
+    │   │   └── activities.py    # Workflow activities
+    │   │
+    │   └── core/
+    │       ├── __init__.py
+    │       ├── database.py      # DB session
+    │       ├── redis.py         # Redis client
+    │       └── observability.py # Tracing setup
+    │
+    ├── migrations/              # Alembic migrations
+    │   └── versions/
+    │
+    └── tests/
+        ├── conftest.py
+        ├── test_api/
+        └── test_services/
+
+# =============================================================================
+# INTEGRATION PATTERNS
+# =============================================================================
+
+integration_patterns:
+  - name: "openrouter_llm_client"
+    description: "LangChain with OpenRouter"
+    pattern: |
+      from langchain_openai import ChatOpenAI
+      
+      llm = ChatOpenAI(
+          model=settings.OPENROUTER_MODEL,
+          openai_api_key=settings.OPENROUTER_API_KEY,
+          openai_api_base="https://openrouter.ai/api/v1",
+          max_tokens=4096,
+          temperature=0.7,
+      )
+      
+  - name: "langfuse_tracing"
+    description: "LLM observability with Langfuse"
+    pattern: |
+      from langfuse.callback import CallbackHandler
+      
+      handler = CallbackHandler(
+          public_key=settings.LANGFUSE_PUBLIC_KEY,
+          secret_key=settings.LANGFUSE_SECRET_KEY,
+          host=settings.LANGFUSE_HOST,
+      )
+      
+      # Use in LangChain
+      result = llm.invoke(messages, config={"callbacks": [handler]})
+      
+  - name: "langgraph_workflow"
+    description: "Multi-step AI pipeline"
+    pattern: |
+      from langgraph.graph import StateGraph, END
+      from typing import TypedDict
+      
+      class OptimizationState(TypedDict):
+          resume_text: str
+          job_description: str
+          analysis: dict
+          optimized_bullets: list
+          
+      workflow = StateGraph(OptimizationState)
+      
+      workflow.add_node("analyze_jd", analyze_job_description)
+      workflow.add_node("identify_gaps", identify_resume_gaps)
+      workflow.add_node("rewrite_bullets", rewrite_experience_bullets)
+      
+      workflow.set_entry_point("analyze_jd")
+      workflow.add_edge("analyze_jd", "identify_gaps")
+      workflow.add_edge("identify_gaps", "rewrite_bullets")
+      workflow.add_edge("rewrite_bullets", END)
+      
+      app = workflow.compile()
+
+  - name: "sse_streaming"
+    description: "Server-Sent Events for progress"
+    pattern: |
+      from fastapi import APIRouter
+      from fastapi.responses import StreamingResponse
+      import asyncio
+      
+      @router.get("/runs/{run_id}/stream")
+      async def stream_run(run_id: str):
+          async def event_generator():
+              async for update in get_run_updates(run_id):
+                  yield f"data: {update.json()}\n\n"
+          
+          return StreamingResponse(
+              event_generator(),
+              media_type="text/event-stream"
+          )
+
+# =============================================================================
+# UPGRADE NOTES
+# =============================================================================
+
+upgrade_notes:
+  langchain_v0_to_v1:
+    breaking_changes:
+      - "Import paths changed: langchain.llms → langchain_openai"
+      - "Callback system updated"
+    migration_steps:
+      - "Update import statements"
+      - "Replace deprecated callback handlers"
+      - "Test all LLM invocations"
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+
+troubleshooting:
+  - symptom: "401 from OpenRouter"
+    causes:
+      - "Invalid API key"
+      - "Account out of credits"
+    solutions:
+      - "Verify OPENROUTER_API_KEY is set correctly"
+      - "Check OpenRouter dashboard for balance"
+      
+  - symptom: "Workflow stuck in pending"
+    causes:
+      - "Temporal worker not running"
+      - "Temporal server unreachable"
+    solutions:
+      - "Ensure worker process is started"
+      - "Check TEMPORAL_HOST connectivity"
+      
+  - symptom: "PDF parsing fails"
+    causes:
+      - "Corrupted PDF"
+      - "Scanned image PDF"
+    solutions:
+      - "Validate PDF before processing"
+      - "Add OCR fallback for scanned documents"
+
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+
+security:
+  recommendations:
+    - "Never log API keys or tokens"
+    - "Validate JWT tokens on every request"
+    - "Sanitize user input before LLM prompts"
+    - "Implement rate limiting per user"
+    - "Use parameterized database queries"
+    
+  production_checklist:
+    - "[ ] All secrets in environment variables"
+    - "[ ] JWT validation enabled"
+    - "[ ] Rate limiting configured"
+    - "[ ] Input validation on all endpoints"
+    - "[ ] SQL injection protection (SQLAlchemy)"
+    - "[ ] CORS configured for production domains"

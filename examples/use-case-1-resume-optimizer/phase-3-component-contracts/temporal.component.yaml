@@ -1,0 +1,338 @@
+# =============================================================================
+# Component Contract: Temporal
+# =============================================================================
+# Genesis Component Catalog - Workflow Engine
+# Version: 1.0.0
+# =============================================================================
+
+component:
+  name: "Temporal"
+  category: "workflow"
+  version: "1.23.x"
+  catalog_id: "temporal-workflow"
+  description: "Durable workflow orchestration for reliable, retryable business processes"
+  
+  maintainer:
+    team: "Platform"
+    contact: "platform@genesis.io"
+    
+  tags:
+    - workflow
+    - orchestration
+    - durable-execution
+    - retry
+    - saga
+
+# =============================================================================
+# INPUT SCHEMA
+# =============================================================================
+
+inputs:
+  required:
+    - name: "DB"
+      type: "enum"
+      description: "Database type for persistence"
+      values: ["postgres", "mysql", "cassandra"]
+      default: "postgres"
+      
+    - name: "POSTGRES_SEEDS"
+      type: "string"
+      description: "PostgreSQL host address"
+      
+    - name: "POSTGRES_USER"
+      type: "string"
+      description: "PostgreSQL username"
+      
+    - name: "POSTGRES_PWD"
+      type: "string"
+      description: "PostgreSQL password"
+      sensitive: true
+      
+  optional:
+    - name: "DB_PORT"
+      type: "integer"
+      description: "Database port"
+      default: 5432
+      
+    - name: "TEMPORAL_BROADCAST_ADDRESS"
+      type: "string"
+      description: "Address for cluster communication"
+      default: "127.0.0.1"
+      
+    - name: "NUM_HISTORY_SHARDS"
+      type: "integer"
+      description: "Number of history shards"
+      default: 512
+      
+    - name: "SERVICES"
+      type: "string"
+      description: "Services to run (frontend,history,matching,worker)"
+      default: "frontend,history,matching,worker"
+
+# =============================================================================
+# OUTPUT SCHEMA
+# =============================================================================
+
+outputs:
+  endpoints:
+    - name: "grpc_frontend"
+      protocol: "gRPC"
+      port: 7233
+      description: "Main gRPC endpoint for client connections"
+      
+    - name: "web_ui"
+      protocol: "HTTP"
+      port: 8088
+      description: "Temporal Web UI (separate container)"
+      
+  namespaces:
+    - name: "default"
+      description: "Default namespace for workflows"
+      retention: "7d"
+
+# =============================================================================
+# HEALTH CHECKS
+# =============================================================================
+
+health_checks:
+  readiness:
+    command: "tctl --address temporal:7233 cluster health"
+    interval: "30s"
+    timeout: "10s"
+    
+  liveness:
+    command: "tctl --address temporal:7233 cluster health"
+    interval: "30s"
+    timeout: "10s"
+
+# =============================================================================
+# SMOKE TESTS
+# =============================================================================
+
+smoke_tests:
+  - name: "cluster_health"
+    description: "Temporal cluster is healthy"
+    type: "script"
+    config:
+      script: |
+        tctl --address localhost:7233 cluster health
+      expected_exit_code: 0
+      
+  - name: "namespace_exists"
+    description: "Default namespace is available"
+    type: "script"
+    config:
+      script: |
+        tctl --address localhost:7233 namespace describe default
+      expected_exit_code: 0
+      
+  - name: "web_ui_accessible"
+    description: "Web UI is accessible"
+    type: "http"
+    config:
+      url: "http://localhost:8088"
+      method: "GET"
+      expected_status: 200
+
+# =============================================================================
+# GOLDEN CONFIGURATION
+# =============================================================================
+
+golden_config:
+  description: "Recommended configuration for Blueprint C (AI Webapp)"
+  
+  docker_compose:
+    temporal:
+      image: "temporalio/auto-setup:1.23.0"
+      environment:
+        - "DB=postgres"
+        - "DB_PORT=5432"
+        - "POSTGRES_USER=${POSTGRES_USER}"
+        - "POSTGRES_PWD=${POSTGRES_PASSWORD}"
+        - "POSTGRES_SEEDS=postgres"
+        - "DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml"
+      volumes:
+        - "./config/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro"
+      ports:
+        - "7233:7233"
+      depends_on:
+        postgres:
+          condition: "service_healthy"
+          
+    temporal-ui:
+      image: "temporalio/ui:2.22.0"
+      environment:
+        - "TEMPORAL_ADDRESS=temporal:7233"
+        - "TEMPORAL_CORS_ORIGINS=http://localhost:3000"
+      ports:
+        - "8088:8080"
+      depends_on:
+        - "temporal"
+
+# =============================================================================
+# WORKFLOW PATTERNS
+# =============================================================================
+
+workflow_patterns:
+  - name: "resume_optimization"
+    description: "Multi-step AI optimization workflow"
+    pattern: |
+      from temporalio import workflow
+      from temporalio.workflow import execute_activity
+      from datetime import timedelta
+      
+      @workflow.defn
+      class ResumeOptimizationWorkflow:
+          @workflow.run
+          async def run(self, resume_id: str, job_description: str) -> dict:
+              # Parse resume
+              parsed = await execute_activity(
+                  parse_resume,
+                  resume_id,
+                  start_to_close_timeout=timedelta(seconds=30),
+              )
+              
+              # Analyze job description
+              analysis = await execute_activity(
+                  analyze_job_description,
+                  job_description,
+                  start_to_close_timeout=timedelta(seconds=60),
+              )
+              
+              # Optimize bullets
+              optimized = await execute_activity(
+                  optimize_bullets,
+                  parsed, analysis,
+                  start_to_close_timeout=timedelta(minutes=2),
+                  retry_policy=RetryPolicy(
+                      maximum_attempts=3,
+                      backoff_coefficient=2.0,
+                  ),
+              )
+              
+              # Save result
+              result = await execute_activity(
+                  save_optimization_result,
+                  resume_id, optimized,
+                  start_to_close_timeout=timedelta(seconds=30),
+              )
+              
+              return result
+              
+  - name: "activity_definition"
+    description: "Activity with retry logic"
+    pattern: |
+      from temporalio import activity
+      
+      @activity.defn
+      async def optimize_bullets(
+          resume_data: dict,
+          jd_analysis: dict
+      ) -> list:
+          """Activity that calls LLM to optimize resume bullets."""
+          # Activity code here
+          # Retries are handled automatically by Temporal
+          pass
+          
+  - name: "worker_setup"
+    description: "Python worker setup"
+    pattern: |
+      from temporalio.client import Client
+      from temporalio.worker import Worker
+      
+      async def run_worker():
+          client = await Client.connect("localhost:7233")
+          
+          worker = Worker(
+              client,
+              task_queue="resumax-queue",
+              workflows=[ResumeOptimizationWorkflow],
+              activities=[
+                  parse_resume,
+                  analyze_job_description,
+                  optimize_bullets,
+                  save_optimization_result,
+              ],
+          )
+          
+          await worker.run()
+          
+  - name: "client_usage"
+    description: "Starting workflows from FastAPI"
+    pattern: |
+      from temporalio.client import Client
+      
+      async def start_optimization(resume_id: str, jd: str) -> str:
+          client = await Client.connect(settings.TEMPORAL_HOST)
+          
+          handle = await client.start_workflow(
+              ResumeOptimizationWorkflow.run,
+              args=[resume_id, jd],
+              id=f"optimize-{resume_id}-{uuid4()}",
+              task_queue="resumax-queue",
+          )
+          
+          return handle.id  # Return workflow ID for status tracking
+
+# =============================================================================
+# UPGRADE NOTES
+# =============================================================================
+
+upgrade_notes:
+  from_1_22_to_1_23:
+    breaking_changes:
+      - "Schedule spec format changes"
+    migration_steps:
+      - "Backup database before upgrade"
+      - "Update Temporal server image"
+      - "Update worker SDK to compatible version"
+      - "Verify all workflows complete or fail gracefully"
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+
+troubleshooting:
+  - symptom: "Workflow stuck in started state"
+    causes:
+      - "No worker polling the task queue"
+      - "Worker crashed"
+    solutions:
+      - "Verify worker is running: check logs"
+      - "Check worker connects to correct task queue"
+      - "Check Temporal UI for workflow history"
+      
+  - symptom: "Activity timeout"
+    causes:
+      - "Activity took too long"
+      - "LLM API timeout"
+    solutions:
+      - "Increase start_to_close_timeout"
+      - "Add heartbeating for long activities"
+      - "Check external API availability"
+      
+  - symptom: "Namespace not found"
+    causes:
+      - "Namespace not created"
+      - "Wrong namespace in config"
+    solutions:
+      - "Create namespace: tctl namespace register default"
+      - "Verify TEMPORAL_NAMESPACE env var"
+
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+
+security:
+  recommendations:
+    - "Use TLS for production deployments"
+    - "Configure namespace-level access control"
+    - "Don't log workflow inputs containing sensitive data"
+    - "Use service accounts for workers"
+    
+  production_checklist:
+    - "[ ] TLS enabled between services"
+    - "[ ] Database credentials rotated"
+    - "[ ] Namespace access restricted"
+    - "[ ] Audit logging enabled"
+    - "[ ] Archival configured for compliance"

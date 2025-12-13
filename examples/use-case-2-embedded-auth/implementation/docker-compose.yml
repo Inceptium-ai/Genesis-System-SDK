@@ -1,0 +1,81 @@
+version: "3.8"
+
+name: embedded-auth-demo
+
+services:
+  # ============================================
+  # DATABASE
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: auth-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: supertokens
+    ports:
+      - "5434:5432"  # Use 5434 to avoid conflict with other projects
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # SUPERTOKENS CORE
+  # ============================================
+  supertokens-core:
+    image: supertokens/supertokens-postgresql:9.0
+    container_name: auth-supertokens
+    ports:
+      - "3567:3567"
+    environment:
+      POSTGRESQL_USER: postgres
+      POSTGRESQL_PASSWORD: postgres
+      POSTGRESQL_DATABASE_NAME: supertokens
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      # Enable Dashboard (no API key = dev mode)
+      DASHBOARD_API_KEY: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3567/hello"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ============================================
+  # FASTAPI BACKEND
+  # ============================================
+  backend:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    container_name: auth-backend
+    ports:
+      - "8001:8000"  # Use 8001 to avoid conflict
+    environment:
+      SUPERTOKENS_CONNECTION_URI: http://supertokens-core:3567
+      APP_NAME: EmbeddedAuthDemo
+      API_DOMAIN: http://localhost:8001
+      WEBSITE_DOMAIN: http://localhost:5175
+    depends_on:
+      supertokens-core:
+        condition: service_healthy
+    volumes:
+      - ./services/backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ============================================
+  # REACT FRONTEND (dev mode via host)
+  # ============================================
+  # Frontend runs on host machine with:
+  # cd services/frontend && npm install && npm run dev
+
+volumes:
+  postgres_data:
+    driver: local

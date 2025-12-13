@@ -1,0 +1,60 @@
+# =============================================================================
+# Temporal Dynamic Configuration
+# =============================================================================
+# Resumax - AI Resume Optimization App
+# Blueprint C: AI Platform / AI Webapp
+# =============================================================================
+# This file contains runtime configuration for Temporal.
+# Changes take effect without restarting the server.
+# =============================================================================
+
+# History settings
+history.maximumSignalNameLength:
+  - value: 1000
+    constraints: {}
+
+# Matching settings
+matching.numTaskqueueReadPartitions:
+  - value: 5
+    constraints: {}
+matching.numTaskqueueWritePartitions:
+  - value: 5
+    constraints: {}
+
+# Frontend settings
+frontend.enableClientVersionCheck:
+  - value: false
+    constraints: {}
+frontend.rps:
+  - value: 2400
+    constraints: {}
+
+# System settings
+system.enableEagerWorkflowStart:
+  - value: true
+    constraints: {}
+
+# Archival (disabled for dev)
+archival.history.enableRead:
+  - value: false
+    constraints: {}
+
+# Visibility settings (important for search)
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# Worker settings
+worker.enableScheduler:
+  - value: true
+    constraints: {}
+
+# Namespace settings
+limit.maxIDLength:
+  - value: 1000
+    constraints: {}
+
+# Retention for development (7 days)
+retention.historySizeHardLimit:
+  - value: 204857600
+    constraints: {}
