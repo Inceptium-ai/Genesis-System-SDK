@@ -1,0 +1,275 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://genesis-sdk.dev/schemas/component.schema.json",
+  "title": "Genesis SDK Component",
+  "description": "Schema for validating Genesis SDK component.yaml files",
+  "type": "object",
+  "required": ["name", "version", "category", "description"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
+      "description": "Component name (lowercase with hyphens)"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9x]+$",
+      "description": "Semantic version (e.g., 1.0.0 or 24.0.x)"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["frontend", "backend", "identity", "infrastructure", "workflow", "observability", "ai"],
+      "description": "Component category"
+    },
+    "validated": {
+      "type": "string",
+      "format": "date",
+      "description": "Date when component was validated (YYYY-MM-DD)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable component description"
+    },
+    "ports": {
+      "type": "object",
+      "description": "Network port configuration",
+      "properties": {
+        "default": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "development": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "production": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "configurable": {
+          "type": "boolean"
+        },
+        "alternate": {
+          "type": "integer",
+          "description": "Alternative port if default is occupied"
+        },
+        "conflicts_note": {
+          "type": "string",
+          "description": "Documentation about common port conflicts"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Environment variable configuration",
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/environmentVariable"
+          }
+        },
+        "optional": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/environmentVariable"
+          }
+        },
+        "build_time": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/environmentVariable"
+          }
+        },
+        "runtime": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/environmentVariable"
+          }
+        }
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "description": "Component integration points",
+      "properties": {
+        "provides": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requires": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "connects_to": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "docker": {
+      "type": "object",
+      "description": "Docker configuration",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "compose_snippet": {
+          "type": "string",
+          "description": "Docker Compose YAML snippet"
+        },
+        "dockerfile": {
+          "type": "string",
+          "description": "Dockerfile content"
+        },
+        "health_check": {
+          "type": "object"
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "description": "File structure documentation",
+      "properties": {
+        "essential": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "optional": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "templates": {
+      "type": "object",
+      "description": "Code templates for the component",
+      "properties": {
+        "complete": {
+          "type": "boolean",
+          "description": "Whether templates are complete, runnable files"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "patterns": {
+      "type": "object",
+      "description": "Integration patterns and code examples",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "gotchas": {
+      "type": ["object", "array"],
+      "description": "Common issues and solutions"
+    },
+    "troubleshooting": {
+      "type": "array",
+      "description": "Troubleshooting guide",
+      "items": {
+        "type": "object",
+        "properties": {
+          "symptom": { "type": "string" },
+          "cause": { "type": "string" },
+          "solution": { "type": "string" }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "Verification tests",
+      "properties": {
+        "smoke": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/testCase"
+          }
+        },
+        "integration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/testCase"
+          }
+        }
+      }
+    },
+    "implementation_instructions": {
+      "type": "string",
+      "description": "Instructions for AI agents implementing this component"
+    },
+    "security": {
+      "type": "object",
+      "description": "Security configuration and checklist"
+    }
+  },
+  "definitions": {
+    "environmentVariable": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Variable name (SCREAMING_SNAKE_CASE)"
+        },
+        "description": {
+          "type": "string"
+        },
+        "default": {
+          "type": ["string", "number", "boolean"]
+        },
+        "sensitive": {
+          "type": "boolean",
+          "description": "Whether value should be hidden in logs"
+        },
+        "format": {
+          "type": "string",
+          "description": "Expected format (e.g., URL, connection string)"
+        },
+        "example": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed values (enum)"
+        }
+      }
+    },
+    "testCase": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Test name"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to execute"
+        },
+        "expected": {
+          "type": "string",
+          "description": "Expected output or exit code"
+        },
+        "steps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Multi-step test procedure"
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

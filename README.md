@@ -32,9 +32,10 @@ Agents don't *learn how to build apps*. They **select from a known set of primit
 
 ```
 Genesis-System-SDK/
-├── components/           # AI-consumable SDK modules
+├── components/              # AI-consumable SDK modules
 │   ├── fastapi-ai-service/
-│   ├── react-vite-frontend/
+│   ├── react-vite-frontend/   # React + Vite SPA
+│   ├── nextjs-frontend/       # Next.js App Router (NEW)
 │   ├── keycloak/
 │   ├── keycloak-custom-theme/
 │   ├── postgres/
@@ -42,11 +43,23 @@ Genesis-System-SDK/
 │   ├── temporal/
 │   └── opentelemetry/
 │
-├── blueprints/           # Composed SDK bundles
+├── blueprints/              # Composed SDK bundles
 │   └── blueprint-c-ai-webapp/
 │
-├── schemas/              # JSON schemas for validation
-└── docs/                 # Guides and specifications
+├── schemas/                 # Reusable patterns & validation
+│   ├── patterns/              # TypeScript pattern files
+│   │   ├── api-response.ts    # Standard API responses
+│   │   ├── pagination.ts      # Pagination patterns
+│   │   └── auth-user.ts       # Auth user shapes
+│   └── validation/            # JSON Schema validators
+│       └── component.schema.json
+│
+├── examples/                # Use case implementations
+│   ├── use-case-1-resume-optimizer/
+│   ├── use-case-2-embedded-auth/
+│   └── use-case-3-keycloak-auth/
+│
+└── docs/                    # Guides and specifications
 ```
 
 ---
@@ -64,18 +77,27 @@ Each component is an AI-consumable SDK module:
 | Documentation | Integration playbooks |
 | Tests | Golden smoke tests |
 
-### Available Components (9 total)
+### Available Components (10 total)
 
 | Component | Description | Category |
 |-----------|-------------|----------|
 | **fastapi-ai-service** | Python API with LLM integration | Backend |
-| **react-vite-frontend** | React + TypeScript + Tailwind | Frontend |
-| **keycloak** | OIDC auth, SSO, RBAC | Identity |
+| **react-vite-frontend** | React + Vite SPA with Tailwind | Frontend |
+| **nextjs-frontend** | Next.js 14 App Router with Keycloak patterns | Frontend |
+| **keycloak** | OIDC auth, SSO, RBAC (with Next.js integration) | Identity |
 | **keycloak-custom-theme** | CSS-only theme customization | Identity |
 | **postgres** | PostgreSQL database | Infrastructure |
 | **redis** | Cache, rate limiting, sessions | Infrastructure |
 | **temporal** | Durable workflow orchestration | Workflow |
 | **opentelemetry** | Distributed tracing | Observability |
+
+### Reusable Patterns (in `/schemas/patterns/`)
+
+| Pattern | Description | Use Case |
+|---------|-------------|----------|
+| **api-response.ts** | Standard API response wrapper | Consistent error handling, success responses |
+| **pagination.ts** | Pagination request/response | List endpoints with page/limit/sort |
+| **auth-user.ts** | Authenticated user types | RBAC, JWT claims, auth state |
 
 ---
 

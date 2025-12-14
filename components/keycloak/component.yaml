@@ -20,8 +20,23 @@ description: |
 # =============================================================================
 ports:
   default: 8080
+  alternate: 8084  # Recommended to avoid conflicts
   admin_console: /admin
   health: /health/ready
+  conflicts_note: |
+    Port 8080 commonly conflicts with:
+    - Tomcat defaults
+    - Jenkins defaults  
+    - Spring Boot defaults
+    - Other Java web servers
+    
+    RECOMMENDATION: Use port 8084 for local development:
+    ```yaml
+    ports:
+      - "8084:8080"
+    ```
+    
+    Then update frontend KEYCLOAK_URL to http://localhost:8084
 
 # =============================================================================
 # ENVIRONMENT VARIABLES
@@ -426,6 +441,156 @@ troubleshooting:
   - symptom: CORS errors from frontend
     cause: Web origins not configured
     solution: Add frontend URL to client's Web Origins in admin console
+
+# =============================================================================
+# NEXT.JS INTEGRATION PATTERNS
+# =============================================================================
+nextjs_integration:
+  description: |
+    Next.js App Router requires special handling for keycloak-js due to:
+    - Server-side rendering (SSR) where window is undefined
+    - Hot Module Replacement (HMR) causing double initialization
+    - The need for PKCE flow with public clients
+    
+  required_files:
+    - path: public/silent-check-sso.html
+      description: Required for silent SSO check
+      content: |
+        <!doctype html>
+        <html>
+        <head><title>Silent Check SSO</title></head>
+        <body>
+          <script>parent.postMessage(location.href, location.origin);</script>
+        </body>
+        </html>
+        
+    - path: src/lib/keycloak.ts
+      description: Keycloak client with Next.js-safe patterns
+      see_component: nextjs-frontend (patterns.keycloak_client)
+      
+  keycloak_realm_config:
+    description: Required client settings for Next.js SPA
+    settings:
+      - name: Client authentication
+        value: "OFF (public client)"
+        reason: SPAs cannot securely store client secrets
+        
+      - name: Standard flow
+        value: "ON"
+        reason: Required for OAuth authorization code flow
+        
+      - name: Direct access grants
+        value: "OFF"
+        reason: Not needed for SPA, reduces attack surface
+        
+      - name: Valid redirect URIs
+        value: "http://localhost:3000/*"
+        reason: Must include frontend URL with wildcard
+        
+      - name: Web origins
+        value: "http://localhost:3000"
+        reason: Required for CORS - no wildcard allowed
+        
+      - name: Proof Key for Code Exchange (PKCE)
+        value: "Enabled"
+        reason: Security best practice for public clients
+        
+  gotchas:
+    - issue: keycloak-js initializes twice in Next.js dev mode
+      cause: Hot Module Replacement re-executes component code
+      solution: |
+        Use a singleton pattern with initPromise:
+        ```typescript
+        let initPromise: Promise<boolean> | null = null;
+        
+        export async function initKeycloak() {
+          if (initPromise) {
+            return initPromise;  // Reuse in-progress init
+          }
+          initPromise = keycloak.init({...});
+          return initPromise;
+        }
+        ```
+        
+    - issue: Keycloak code errors on server (window is undefined)
+      cause: Next.js SSR runs component code on server
+      solution: |
+        1. Add 'use client' directive to components using Keycloak
+        2. Guard initialization:
+        ```typescript
+        if (typeof window === 'undefined') {
+          throw new Error('Keycloak can only be used in browser');
+        }
+        ```
+        3. Use useEffect (runs only on client)
+        
+    - issue: Silent SSO check fails with 404
+      cause: Missing public/silent-check-sso.html
+      solution: Create the file with parent.postMessage script
+      
+    - issue: CORS error on token endpoint
+      cause: Frontend URL not in client's Web Origins
+      solution: |
+        Keycloak Admin Console > Clients > [your-client]:
+        - Web Origins: http://localhost:3000
+        - Valid Redirect URIs: http://localhost:3000/*
+        
+    - issue: Login redirects to wrong URL
+      cause: redirectUri not set in login() call
+      solution: |
+        ```typescript
+        await keycloak.login({
+          redirectUri: `${window.location.origin}/dashboard`
+        });
+        ```
+        
+    - issue: Token refresh fails in background tabs
+      cause: Browser throttles background JavaScript
+      solution: Refresh token before each API call, not on timer
+
+  environment_variables:
+    frontend:
+      - name: NEXT_PUBLIC_KEYCLOAK_URL
+        example: "http://localhost:8084"
+        note: Use NEXT_PUBLIC_ prefix for client-side access
+        
+      - name: NEXT_PUBLIC_KEYCLOAK_REALM
+        example: "my-realm"
+        
+      - name: NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+        example: "my-app"
+        
+  verification_checklist:
+    - step: 1. Keycloak server accessible
+      command: curl -sf http://localhost:8084/health/ready
+      expected: '{"status":"UP"}'
+      
+    - step: 2. Realm exists
+      command: curl -sf http://localhost:8084/realms/my-realm
+      expected: Contains "realm":"my-realm"
+      
+    - step: 3. OIDC config available
+      command: curl -sf http://localhost:8084/realms/my-realm/.well-known/openid-configuration
+      expected: Contains "authorization_endpoint"
+      
+    - step: 4. Client exists
+      command: |
+        # Get admin token first, then:
+        # GET /admin/realms/my-realm/clients?clientId=my-app
+      expected: Returns client configuration
+      
+    - step: 5. Test token endpoint
+      command: |
+        curl -X POST http://localhost:8084/realms/my-realm/protocol/openid-connect/token \
+          -d "grant_type=password" \
+          -d "client_id=my-app" \
+          -d "username=testuser" \
+          -d "password=testpass123!"
+      expected: Contains "access_token"
+      
+    - step: 6. Silent SSO file accessible
+      command: curl -sf http://localhost:3000/silent-check-sso.html
+      expected: Contains "postMessage"
 
 # =============================================================================
 # SECURITY CHECKLIST

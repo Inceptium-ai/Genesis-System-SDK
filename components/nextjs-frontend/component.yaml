@@ -1,0 +1,858 @@
+# =============================================================================
+# Next.js App Router Frontend Component
+# =============================================================================
+# A modern Next.js 14+ frontend with App Router, TypeScript, Tailwind CSS,
+# and production-ready patterns for authentication and API integration.
+# =============================================================================
+
+name: nextjs-frontend
+version: 1.0.0
+category: frontend
+validated: 2024-12-13
+
+description: |
+  Production-ready Next.js frontend using App Router for modern React patterns,
+  TypeScript for type safety, and Tailwind CSS for styling.
+  Includes patterns for Keycloak authentication, protected routes, and API handlers.
+
+# =============================================================================
+# PORTS & NETWORKING
+# =============================================================================
+ports:
+  development: 3000
+  production: 3000
+  configurable: true
+  alternate: 3002  # Use if 3000 is occupied
+  conflicts_note: |
+    Port 3000 commonly conflicts with:
+    - Create React App defaults
+    - Other Next.js projects
+    - Ruby on Rails defaults
+    Use NEXT_PORT env var or -p flag to change: `next dev -p 3002`
+
+# =============================================================================
+# ENVIRONMENT VARIABLES
+# =============================================================================
+environment:
+  build_time:
+    - name: NEXT_PUBLIC_API_URL
+      description: Backend API URL (available client-side)
+      default: ""  # Empty means relative URLs (/api/*)
+      note: Prefix with NEXT_PUBLIC_ for client-side access
+      
+    - name: NEXT_PUBLIC_KEYCLOAK_URL
+      description: Keycloak server URL
+      default: "http://localhost:8084"
+      
+    - name: NEXT_PUBLIC_KEYCLOAK_REALM
+      description: Keycloak realm name
+      default: "my-realm"
+      
+    - name: NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+      description: Keycloak client ID for this app
+      default: "my-app"
+      
+  runtime:
+    - name: NODE_ENV
+      description: Node environment
+      values: [development, production, test]
+      
+  optional:
+    - name: NEXT_PUBLIC_APP_NAME
+      description: Application name for UI
+      default: "My App"
+
+# =============================================================================
+# INTEGRATIONS
+# =============================================================================
+integrations:
+  provides:
+    - ssr_app           # Server-side rendered pages
+    - api_routes        # Built-in API endpoints (/api/*)
+    - static_export     # Optional static export
+    
+  connects_to:
+    - keycloak (authentication)
+    - fastapi-ai-service (via API routes or direct)
+    - postgres (via API routes)
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+docker:
+  image: catalog/nextjs-frontend
+  
+  compose_snippet: |
+    frontend:
+      build:
+        context: ./services/frontend
+        dockerfile: Dockerfile
+      container_name: ${APP_NAME:-app}-frontend
+      ports:
+        - "${FRONTEND_PORT:-3000}:3000"
+      environment:
+        - NODE_ENV=production
+        - NEXT_PUBLIC_API_URL=${API_URL:-}
+        - NEXT_PUBLIC_KEYCLOAK_URL=${KEYCLOAK_URL:-http://keycloak:8080}
+        - NEXT_PUBLIC_KEYCLOAK_REALM=${KEYCLOAK_REALM:-my-realm}
+        - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-my-app}
+      depends_on:
+        - api
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:3000"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+
+  dockerfile: |
+    # Multi-stage build for production
+    FROM node:20-alpine AS base
+    
+    # Install dependencies only when needed
+    FROM base AS deps
+    RUN apk add --no-cache libc6-compat
+    WORKDIR /app
+    COPY package.json package-lock.json* ./
+    RUN npm ci
+    
+    # Build the application
+    FROM base AS builder
+    WORKDIR /app
+    COPY --from=deps /app/node_modules ./node_modules
+    COPY . .
+    RUN npm run build
+    
+    # Production image
+    FROM base AS runner
+    WORKDIR /app
+    ENV NODE_ENV=production
+    
+    RUN addgroup --system --gid 1001 nodejs
+    RUN adduser --system --uid 1001 nextjs
+    
+    COPY --from=builder /app/public ./public
+    COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+    COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+    
+    USER nextjs
+    EXPOSE 3000
+    ENV PORT=3000
+    CMD ["node", "server.js"]
+
+# =============================================================================
+# FILES (Template Structure)
+# =============================================================================
+files:
+  essential:
+    - src/app/layout.tsx        # Root layout
+    - src/app/page.tsx          # Home page
+    - src/app/globals.css       # Global styles (Tailwind)
+    - src/lib/keycloak.ts       # Keycloak client (if using auth)
+    - package.json              # Dependencies (pinned versions)
+    - next.config.js            # Next.js configuration
+    - tsconfig.json             # TypeScript config
+    - tailwind.config.ts        # Tailwind configuration
+    - postcss.config.js         # PostCSS for Tailwind
+    - next-env.d.ts             # Next.js TypeScript declarations
+    - public/silent-check-sso.html  # Required for Keycloak SSO
+    
+  optional:
+    - src/app/api/              # API route handlers
+    - src/app/(protected)/      # Route group for auth-required pages
+    - src/app/[slug]/           # Dynamic routes
+    - src/components/           # Reusable UI components
+    - src/lib/                  # Utility functions
+    - src/types/                # TypeScript type definitions
+    - Dockerfile                # Production build
+    - .dockerignore             # Build optimization
+
+# =============================================================================
+# TEMPLATE CODE - COMPLETE FILES
+# =============================================================================
+templates:
+  complete: true  # All templates are complete, runnable files
+
+  # ---------------------------------------------------------------------------
+  # package.json - PINNED VERSIONS
+  # ---------------------------------------------------------------------------
+  package_json: |
+    {
+      "name": "my-nextjs-app",
+      "version": "0.1.0",
+      "private": true,
+      "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint"
+      },
+      "dependencies": {
+        "next": "14.0.4",
+        "react": "18.2.0",
+        "react-dom": "18.2.0",
+        "keycloak-js": "23.0.4",
+        "lucide-react": "0.303.0",
+        "clsx": "2.1.0",
+        "tailwind-merge": "2.2.0"
+      },
+      "devDependencies": {
+        "typescript": "5.3.3",
+        "@types/node": "20.10.6",
+        "@types/react": "18.2.46",
+        "@types/react-dom": "18.2.18",
+        "autoprefixer": "10.4.16",
+        "postcss": "8.4.32",
+        "tailwindcss": "3.4.0",
+        "eslint": "8.56.0",
+        "eslint-config-next": "14.0.4"
+      }
+    }
+
+  # ---------------------------------------------------------------------------
+  # next.config.js
+  # ---------------------------------------------------------------------------
+  next_config: |
+    /** @type {import('next').NextConfig} */
+    const nextConfig = {
+      output: 'standalone',  // Required for Docker
+      
+      // Environment variables available at build time
+      env: {
+        NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME || 'My App',
+      },
+      
+      // Rewrites for API proxying (optional)
+      async rewrites() {
+        return [
+          // Proxy /api/backend/* to external API
+          // {
+          //   source: '/api/backend/:path*',
+          //   destination: 'http://localhost:8000/:path*',
+          // },
+        ];
+      },
+    };
+    
+    module.exports = nextConfig;
+
+  # ---------------------------------------------------------------------------
+  # tsconfig.json - COMPLETE
+  # ---------------------------------------------------------------------------
+  tsconfig_json: |
+    {
+      "compilerOptions": {
+        "lib": ["dom", "dom.iterable", "esnext"],
+        "allowJs": true,
+        "skipLibCheck": true,
+        "strict": true,
+        "noEmit": true,
+        "esModuleInterop": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "jsx": "preserve",
+        "incremental": true,
+        "plugins": [
+          {
+            "name": "next"
+          }
+        ],
+        "paths": {
+          "@/*": ["./src/*"]
+        }
+      },
+      "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+      "exclude": ["node_modules"]
+    }
+
+  # ---------------------------------------------------------------------------
+  # next-env.d.ts - REQUIRED FOR TYPESCRIPT
+  # ---------------------------------------------------------------------------
+  next_env_dts: |
+    /// <reference types="next" />
+    /// <reference types="next/image-types/global" />
+    
+    // NOTE: This file should not be edited
+    // see https://nextjs.org/docs/basic-features/typescript for more information.
+
+  # ---------------------------------------------------------------------------
+  # tailwind.config.ts
+  # ---------------------------------------------------------------------------
+  tailwind_config: |
+    import type { Config } from 'tailwindcss';
+    
+    const config: Config = {
+      content: [
+        './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
+        './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+        './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+      ],
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            },
+          },
+        },
+      },
+      plugins: [],
+    };
+    
+    export default config;
+
+  # ---------------------------------------------------------------------------
+  # postcss.config.js
+  # ---------------------------------------------------------------------------
+  postcss_config: |
+    module.exports = {
+      plugins: {
+        tailwindcss: {},
+        autoprefixer: {},
+      },
+    };
+
+  # ---------------------------------------------------------------------------
+  # src/app/layout.tsx - ROOT LAYOUT
+  # ---------------------------------------------------------------------------
+  app_layout: |
+    import type { Metadata } from 'next';
+    import './globals.css';
+    
+    export const metadata: Metadata = {
+      title: process.env.NEXT_PUBLIC_APP_NAME || 'My App',
+      description: 'Built with Genesis System SDK',
+    };
+    
+    export default function RootLayout({
+      children,
+    }: {
+      children: React.ReactNode;
+    }) {
+      return (
+        <html lang="en">
+          <body className="min-h-screen bg-gray-50 antialiased">
+            {children}
+          </body>
+        </html>
+      );
+    }
+
+  # ---------------------------------------------------------------------------
+  # src/app/page.tsx - HOME PAGE
+  # ---------------------------------------------------------------------------
+  app_page: |
+    export default function HomePage() {
+      return (
+        <main className="flex min-h-screen flex-col items-center justify-center p-24">
+          <h1 className="text-4xl font-bold mb-4">Welcome</h1>
+          <p className="text-gray-600">
+            Your Next.js app is ready. Edit src/app/page.tsx to get started.
+          </p>
+        </main>
+      );
+    }
+
+  # ---------------------------------------------------------------------------
+  # src/app/globals.css
+  # ---------------------------------------------------------------------------
+  globals_css: |
+    @tailwind base;
+    @tailwind components;
+    @tailwind utilities;
+    
+    /* Custom global styles */
+    body {
+      @apply text-gray-900;
+    }
+
+  # ---------------------------------------------------------------------------
+  # public/silent-check-sso.html - REQUIRED FOR KEYCLOAK
+  # ---------------------------------------------------------------------------
+  silent_check_sso: |
+    <!doctype html>
+    <html>
+    <head>
+      <title>Silent Check SSO</title>
+    </head>
+    <body>
+      <script>
+        parent.postMessage(location.href, location.origin);
+      </script>
+    </body>
+    </html>
+
+# =============================================================================
+# PATTERNS - KEYCLOAK INTEGRATION FOR NEXT.JS
+# =============================================================================
+patterns:
+  # ---------------------------------------------------------------------------
+  # COMPLETE KEYCLOAK CLIENT FOR NEXT.JS
+  # ---------------------------------------------------------------------------
+  keycloak_client: |
+    // src/lib/keycloak.ts
+    // COMPLETE Keycloak client for Next.js App Router
+    // Handles all gotchas: double-init, SSR, PKCE
+    
+    import Keycloak from 'keycloak-js';
+    
+    // Singleton instance
+    let keycloakInstance: Keycloak | null = null;
+    
+    // Prevent double initialization (Next.js HMR issue)
+    let initPromise: Promise<boolean> | null = null;
+    
+    /**
+     * Get or create Keycloak instance
+     * MUST be called only in browser context
+     */
+    export function getKeycloak(): Keycloak {
+      // Guard against SSR - Next.js runs components on server first
+      if (typeof window === 'undefined') {
+        throw new Error('Keycloak can only be used in the browser');
+      }
+      
+      if (!keycloakInstance) {
+        keycloakInstance = new Keycloak({
+          url: process.env.NEXT_PUBLIC_KEYCLOAK_URL || 'http://localhost:8084',
+          realm: process.env.NEXT_PUBLIC_KEYCLOAK_REALM || 'my-realm',
+          clientId: process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || 'my-app',
+        });
+      }
+      return keycloakInstance;
+    }
+    
+    /**
+     * User info returned after successful authentication
+     */
+    export interface KeycloakUser {
+      id: string;
+      email: string;
+      name: string;
+      roles: string[];
+      token: string;
+    }
+    
+    /**
+     * Initialize Keycloak and check for existing session
+     * Safe to call multiple times - will reuse existing initialization
+     */
+    export async function initKeycloak(): Promise<KeycloakUser | null> {
+      const kc = getKeycloak();
+      
+      // Already authenticated
+      if (kc.authenticated && kc.tokenParsed) {
+        return extractUserInfo(kc);
+      }
+      
+      // Init already in progress - wait for it
+      if (initPromise) {
+        await initPromise;
+        if (kc.authenticated && kc.tokenParsed) {
+          return extractUserInfo(kc);
+        }
+        return null;
+      }
+      
+      // Start initialization
+      initPromise = kc.init({
+        onLoad: 'check-sso',
+        checkLoginIframe: false,  // Disable - causes issues in modern browsers
+        pkceMethod: 'S256',       // Security best practice
+        silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
+      });
+      
+      try {
+        const authenticated = await initPromise;
+        console.log('[Keycloak] Init complete, authenticated:', authenticated);
+        
+        if (authenticated && kc.tokenParsed) {
+          return extractUserInfo(kc);
+        }
+        return null;
+      } catch (error) {
+        console.error('[Keycloak] Init error:', error);
+        initPromise = null;  // Allow retry
+        return null;
+      }
+    }
+    
+    /**
+     * Extract user info from Keycloak token
+     */
+    async function extractUserInfo(kc: Keycloak): Promise<KeycloakUser> {
+      try {
+        const userInfo = await kc.loadUserInfo() as Record<string, unknown>;
+        const realmRoles = kc.tokenParsed?.realm_access?.roles || [];
+        
+        return {
+          id: kc.tokenParsed?.sub || '',
+          email: (userInfo?.email as string) || kc.tokenParsed?.email || '',
+          name: (userInfo?.name as string) || kc.tokenParsed?.preferred_username || '',
+          roles: realmRoles,
+          token: kc.token || '',
+        };
+      } catch (error) {
+        // Fallback to token claims if userinfo endpoint fails
+        return {
+          id: kc.tokenParsed?.sub || '',
+          email: kc.tokenParsed?.email || '',
+          name: kc.tokenParsed?.preferred_username || '',
+          roles: kc.tokenParsed?.realm_access?.roles || [],
+          token: kc.token || '',
+        };
+      }
+    }
+    
+    /**
+     * Redirect to Keycloak login page
+     */
+    export async function login(redirectUri?: string): Promise<void> {
+      const kc = getKeycloak();
+      
+      // Ensure initialized first
+      if (!initPromise) {
+        await initKeycloak();
+      } else {
+        await initPromise;
+      }
+      
+      await kc.login({
+        redirectUri: redirectUri || `${window.location.origin}/dashboard`,
+      });
+    }
+    
+    /**
+     * Logout and redirect to home
+     */
+    export async function logout(): Promise<void> {
+      const kc = getKeycloak();
+      await kc.logout({
+        redirectUri: window.location.origin,
+      });
+    }
+    
+    /**
+     * Get current access token (refreshes if needed)
+     */
+    export async function getToken(): Promise<string | null> {
+      const kc = getKeycloak();
+      
+      if (!kc.authenticated) {
+        return null;
+      }
+      
+      try {
+        // Refresh if expiring in next 30 seconds
+        await kc.updateToken(30);
+        return kc.token || null;
+      } catch (error) {
+        console.error('[Keycloak] Token refresh error:', error);
+        return null;
+      }
+    }
+    
+    /**
+     * Check if user has a specific realm role
+     */
+    export function hasRole(role: string): boolean {
+      const kc = getKeycloak();
+      return kc.hasRealmRole(role);
+    }
+    
+    /**
+     * Check if currently authenticated
+     */
+    export function isAuthenticated(): boolean {
+      try {
+        const kc = getKeycloak();
+        return kc.authenticated === true;
+      } catch {
+        return false;
+      }
+    }
+
+  # ---------------------------------------------------------------------------
+  # PROTECTED LAYOUT PATTERN
+  # ---------------------------------------------------------------------------
+  protected_layout: |
+    // src/app/(protected)/layout.tsx
+    // Wrap pages that require authentication
+    
+    'use client';
+    
+    import { useEffect, useState } from 'react';
+    import { initKeycloak, login, type KeycloakUser } from '@/lib/keycloak';
+    
+    export default function ProtectedLayout({
+      children,
+    }: {
+      children: React.ReactNode;
+    }) {
+      const [user, setUser] = useState<KeycloakUser | null>(null);
+      const [loading, setLoading] = useState(true);
+      
+      useEffect(() => {
+        initKeycloak().then((authenticatedUser) => {
+          if (!authenticatedUser) {
+            // Not authenticated - redirect to login
+            login();
+          } else {
+            setUser(authenticatedUser);
+            setLoading(false);
+          }
+        });
+      }, []);
+      
+      if (loading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+          </div>
+        );
+      }
+      
+      return <>{children}</>;
+    }
+
+  # ---------------------------------------------------------------------------
+  # DYNAMIC ROUTE PATTERN
+  # ---------------------------------------------------------------------------
+  dynamic_route: |
+    // src/app/items/[id]/page.tsx
+    // Dynamic route example - access params.id
+    
+    interface PageProps {
+      params: { id: string };
+    }
+    
+    export default function ItemPage({ params }: PageProps) {
+      return (
+        <div className="p-8">
+          <h1 className="text-2xl font-bold">Item: {params.id}</h1>
+          {/* Fetch and display item data */}
+        </div>
+      );
+    }
+    
+    // Optional: Generate static paths at build time
+    // export async function generateStaticParams() {
+    //   return [{ id: '1' }, { id: '2' }];
+    // }
+
+  # ---------------------------------------------------------------------------
+  # API ROUTE HANDLER PATTERN
+  # ---------------------------------------------------------------------------
+  api_route_handler: |
+    // src/app/api/items/route.ts
+    // API Route Handler - Next.js built-in API
+    
+    import { NextRequest, NextResponse } from 'next/server';
+    
+    // GET /api/items
+    export async function GET(request: NextRequest) {
+      // Access query params
+      const { searchParams } = new URL(request.url);
+      const page = searchParams.get('page') || '1';
+      
+      return NextResponse.json({
+        data: [],
+        meta: { page: parseInt(page) },
+      });
+    }
+    
+    // POST /api/items
+    export async function POST(request: NextRequest) {
+      try {
+        const body = await request.json();
+        
+        // Validate, process, save...
+        
+        return NextResponse.json(
+          { success: true, data: body },
+          { status: 201 }
+        );
+      } catch (error) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid request' },
+          { status: 400 }
+        );
+      }
+    }
+
+  # ---------------------------------------------------------------------------
+  # AUTHENTICATED API CALL PATTERN
+  # ---------------------------------------------------------------------------
+  authenticated_fetch: |
+    // Pattern for making authenticated API calls
+    
+    import { getToken } from '@/lib/keycloak';
+    
+    export async function fetchWithAuth<T>(
+      url: string,
+      options: RequestInit = {}
+    ): Promise<T> {
+      const token = await getToken();
+      
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+      
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Token expired or invalid - trigger re-auth
+          window.location.href = '/auth/login';
+        }
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      return response.json();
+    }
+
+# =============================================================================
+# GOTCHAS - COMMON ISSUES AND SOLUTIONS
+# =============================================================================
+gotchas:
+  keycloak_integration:
+    - issue: keycloak-js initializes twice in development mode (HMR)
+      cause: Next.js hot module replacement re-runs component code
+      solution: Use initPromise singleton pattern to deduplicate initialization
+      code: |
+        let initPromise: Promise<boolean> | null = null;
+        if (initPromise) await initPromise;  // Reuse existing
+        
+    - issue: Keycloak code runs on server during SSR
+      cause: Next.js pre-renders pages on server where window is undefined
+      solution: |
+        1. Add 'use client' directive to components using Keycloak
+        2. Guard with: if (typeof window === 'undefined') throw Error(...)
+        3. Use useEffect for initialization (runs only on client)
+        
+    - issue: Silent SSO check fails with 404
+      cause: Missing silent-check-sso.html file
+      solution: Create public/silent-check-sso.html with postMessage script
+      
+    - issue: CORS errors on Keycloak token endpoint
+      cause: Keycloak client doesn't have frontend URL in Web Origins
+      solution: |
+        In Keycloak Admin Console:
+        1. Go to Clients > your-client
+        2. Add http://localhost:3000 to "Web Origins"
+        3. Add http://localhost:3000/* to "Valid Redirect URIs"
+        
+    - issue: Token refresh fails silently in background tabs
+      cause: Browser throttles background tab JavaScript
+      solution: Check and refresh token before each API call, not on interval
+
+  typescript:
+    - issue: JSX element implicitly has type 'any'
+      solution: Ensure tsconfig.json has "jsx": "preserve" and includes next-env.d.ts
+      
+    - issue: Cannot find module '@/lib/...'
+      solution: |
+        Add paths to tsconfig.json:
+        "paths": { "@/*": ["./src/*"] }
+        
+  production:
+    - issue: Build fails with "output: 'standalone'" missing
+      solution: Add to next.config.js for Docker deployment
+      
+    - issue: Environment variables not available in client
+      solution: Prefix with NEXT_PUBLIC_ for client-side access
+
+# =============================================================================
+# TESTS - VERIFICATION CHECKLIST
+# =============================================================================
+tests:
+  smoke:
+    - name: Development server starts
+      command: npm run dev &; sleep 5; curl -sf http://localhost:3000
+      expected: "200"
+      
+    - name: Production build succeeds
+      command: npm run build
+      expected: "Compiled successfully"
+      
+    - name: TypeScript compiles without errors
+      command: npx tsc --noEmit
+      expected: "exit 0"
+      
+  integration:
+    - name: Silent SSO file accessible
+      command: curl -sf http://localhost:3000/silent-check-sso.html
+      expected: "postMessage"
+      
+    - name: API routes respond
+      command: curl -sf http://localhost:3000/api/health
+      expected: "200"
+
+# =============================================================================
+# IMPLEMENTATION INSTRUCTIONS
+# =============================================================================
+implementation_instructions: |
+  ## For AI Implementation Agents
+  
+  ### Quick Start (5 minutes)
+  
+  1. **Create project structure:**
+     ```bash
+     mkdir my-app && cd my-app
+     ```
+  
+  2. **Copy template files** from this component:
+     - package.json (use exact versions!)
+     - tsconfig.json
+     - next.config.js
+     - tailwind.config.ts
+     - postcss.config.js
+     - next-env.d.ts
+     
+  3. **Create app directory:**
+     ```
+     src/app/
+     ├── layout.tsx
+     ├── page.tsx
+     └── globals.css
+     ```
+     
+  4. **Create public directory:**
+     ```
+     public/
+     └── silent-check-sso.html  (REQUIRED for Keycloak)
+     ```
+  
+  5. **Install and run:**
+     ```bash
+     npm install
+     npm run dev
+     ```
+  
+  ### Adding Authentication
+  
+  1. Copy `src/lib/keycloak.ts` from patterns.keycloak_client
+  2. Create protected layout from patterns.protected_layout
+  3. Ensure environment variables are set:
+     - NEXT_PUBLIC_KEYCLOAK_URL
+     - NEXT_PUBLIC_KEYCLOAK_REALM
+     - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+  
+  ### Key Points
+  
+  - Use `'use client'` for components that use Keycloak or browser APIs
+  - Server Components (default) cannot use Keycloak directly
+  - API Routes can verify JWT tokens server-side
+  - Use exact dependency versions from package.json template
