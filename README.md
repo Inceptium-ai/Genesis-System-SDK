@@ -208,6 +208,19 @@ spec:
 
 ## 🔑 Why This Matters
 
+### Bridging Software Development and AI
+
+Traditional development relies on implicit knowledge that takes years to learn. AI agents can't absorb "tribal knowledge" through experience—they need explicit contracts.
+
+| Software Development | GSS Translation | AI Systems |
+|---------------------|-----------------|------------|
+| Human-readable tutorials | → | Machine-consumable contracts |
+| "Just know" best practices | → | Explicit gotchas & patterns |
+| Learn through debugging | → | Pre-tested integration paths |
+| Implicit tribal knowledge | → | Documented `component.yaml` |
+
+**GSS is the translation layer** — encoding years of developer experience into contracts AI can reliably consume.
+
 ### Most AI app builders fail because:
 - Agents hallucinate architecture
 - Auth is reinvented badly
