@@ -28,6 +28,25 @@ Agents don't *learn how to build apps*. They **select from a known set of primit
 
 ---
 
+## 🏠 Understanding GSS (No Code Required)
+
+**Think of GSS like building a house:**
+
+| GSS Part | House Equivalent | What It Does |
+|----------|-----------------|--------------|
+| **Components** | 🔧 Major systems (plumbing, electrical, HVAC, security) | Standalone technologies that run independently. You install them, they do their job. |
+| **Schemas** | 📋 Building codes & best practices | Rules and patterns to follow. "How to wire an outlet safely." You don't install these—you apply them. |
+| **Blueprints** | 📐 Complete house plans | Pre-designed combinations of systems. A blueprint combines plumbing + electrical + HVAC into a ready-to-build package. |
+| **Examples** | 🏡 Model homes | Real houses you can tour. Prove that the blueprint and components actually work together in practice. |
+
+**The key insight:**
+- Components are **installed** (they run as services)
+- Schemas are **followed** (they're patterns you copy into your code)
+- Blueprints **combine** components into working stacks
+- Examples **prove** it all works in real-world applications
+
+---
+
 ## 📦 What's in the SDK
 
 ```
@@ -215,7 +234,7 @@ Components are validated through **use cases** — real application scenarios th
 4. **Test with an existing use case** (or create a new one)
 5. **Submit a PR** with your validation results
 
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
