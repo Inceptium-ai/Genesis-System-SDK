@@ -12,6 +12,19 @@
 
 ---
 
+## 🏠 Understanding GSS
+
+**Think of GSS like building a house:**
+
+| GSS Part | House Equivalent | What It Does |
+|----------|-----------------|--------------|
+| **Components** | 🔧 Major systems (plumbing, electrical) | Standalone technologies that run independently |
+| **Schemas** | 📋 Building codes | Patterns you follow, not install |
+| **Blueprints** | 📐 House plans | Pre-designed combinations of systems |
+| **Examples** | 🏡 Model homes | Prove everything works together |
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
