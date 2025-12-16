@@ -4,6 +4,8 @@
 
 ### 🎯 Give AI everything it needs to develop in one shot
 
+**Genesis** *(the beginning)* • **System** *(end-to-end integration)* • **SDK** *(AI-consumable components and blueprints)*
+
 </div>
 
 > An AI-native SDK of **pre-approved, production-ready components** that agents compose into complete applications — without hallucinating architecture.
