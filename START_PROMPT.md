@@ -24,9 +24,16 @@ I want to build an app using Genesis System SDK (GSS).
 5. Copy Docker configs and pinned package versions **exactly** — only adapt business logic
 6. Use patterns from `/schemas/patterns/` for API responses, pagination, and error handling
 7. Verify each component works using smoke tests from component.yaml
+8. **Set up a `gss/` directory in the project root** to maintain architectural documentation:
+   - Copy `blueprint.yaml` and customize for this project
+   - Include component configs for each technology used (e.g., `keycloak.yaml`, `postgres.yaml`)
+   - Add schemas/patterns being used
+   - **Update `gss/blueprint.yaml` as the architecture evolves** — this is the project's source of truth
+   - Add new custom components and schemas as the app grows
 
 **Help me:**
 - Select the appropriate GSS components for my idea
+- **Set up the `gss/` directory structure** for maintaining architecture documentation
 - Set up the project structure following GSS patterns
 - Create a working docker-compose.yml
 - Generate environment configuration (.env.example)

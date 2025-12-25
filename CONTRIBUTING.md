@@ -497,11 +497,30 @@ If no, add more documentation.
 
 ---
 
-## 📞 Getting Help
+## 📞 Getting Help & Getting Involved
 
-- **Questions**: Open a GitHub Discussion
-- **Bugs**: Open a GitHub Issue
+### We're Looking for You!
+
+Genesis SDK is an open-source project actively seeking **contributors and maintainers**. If you're passionate about AI-driven development and want to shape the future of how AI agents build applications, reach out!
+
+### Contact
+
+- **Maintainer inquiries**: [yazdan@inceptium.ai](mailto:yazdan@inceptium.ai)
+- **Questions**: Open a [GitHub Discussion](https://github.com/Inceptium-ai/Genesis-System-SDK/discussions)
+- **Bugs**: Open a [GitHub Issue](https://github.com/Inceptium-ai/Genesis-System-SDK/issues)
 - **Ideas**: Open a GitHub Discussion first to gauge interest
+
+### Interested in Becoming a Maintainer?
+
+Email us at [yazdan@inceptium.ai](mailto:yazdan@inceptium.ai) with:
+- Your background and interests
+- Areas of the SDK you'd like to help with
+- Any relevant open-source contributions
+
+We're especially looking for help with:
+- Component development and documentation
+- Blueprint design and testing
+- Code reviews and community support
 
 ---
 
