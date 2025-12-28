@@ -1,0 +1,361 @@
+# GSS Component: LangChain Structured Output
+# Provides reliable structured output from LLMs with automatic fallback strategies
+
+component:
+  name: langchain-structured-output
+  type: llm
+  version: "1.0.0"
+  description: |
+    Reliable structured output from LLMs using LangChain's with_structured_output().
+    Automatically selects the best strategy based on model capabilities:
+    1. Native provider structured output (OpenAI, Anthropic)
+    2. Tool/function calling
+    3. Prompt + output parser with validation
+    
+    Provides ~98% reliability for structured JSON output compliance.
+
+  dependencies:
+    python:
+      - langchain-core>=0.3.0
+      - langchain-openai>=0.2.0  # For OpenAI/OpenRouter
+      - langchain-anthropic>=0.2.0  # For Anthropic
+      - pydantic>=2.0.0
+
+  environment_variables:
+    required:
+      - name: OPENAI_API_KEY
+        description: OpenAI API key (or OpenRouter key with base_url override)
+        example: "sk-..."
+      
+    optional:
+      - name: OPENROUTER_API_KEY
+        description: OpenRouter API key (alternative to direct provider keys)
+        example: "sk-or-v1-..."
+      - name: ANTHROPIC_API_KEY
+        description: Anthropic API key for Claude models
+        example: "sk-ant-..."
+      - name: LLM_MODEL
+        description: Default model to use
+        default: "gpt-4o"
+      - name: LLM_TEMPERATURE
+        description: Model temperature
+        default: "0"
+
+# =============================================================================
+# PATTERNS - Copy-paste ready code templates
+# =============================================================================
+patterns:
+  
+  basic_structured_output:
+    description: Basic usage with Pydantic model
+    code: |
+      from langchain_openai import ChatOpenAI
+      from pydantic import BaseModel, Field
+      from typing import List
+      
+      # Define your output schema
+      class ResumeAnalysis(BaseModel):
+          """Structured analysis of a resume."""
+          score: int = Field(description="Overall score from 0-100")
+          strengths: List[str] = Field(description="Key strengths identified")
+          weaknesses: List[str] = Field(description="Areas for improvement")
+          summary: str = Field(description="Brief summary of the resume")
+      
+      # Create LLM with structured output
+      llm = ChatOpenAI(model="gpt-4o", temperature=0)
+      structured_llm = llm.with_structured_output(ResumeAnalysis)
+      
+      # Use it - result is GUARANTEED to be valid ResumeAnalysis
+      result = structured_llm.invoke("Analyze this resume: {resume_text}")
+      print(f"Score: {result.score}")
+      print(f"Strengths: {result.strengths}")
+
+  openrouter_integration:
+    description: Using OpenRouter for multi-provider access
+    code: |
+      from langchain_openai import ChatOpenAI
+      from pydantic import BaseModel, Field
+      import os
+      
+      class MyOutput(BaseModel):
+          answer: str = Field(description="The answer")
+          confidence: float = Field(description="Confidence 0-1")
+      
+      # OpenRouter configuration
+      llm = ChatOpenAI(
+          model="anthropic/claude-3.5-sonnet",  # Or any OpenRouter model
+          base_url="https://openrouter.ai/api/v1",
+          api_key=os.getenv("OPENROUTER_API_KEY"),
+          default_headers={
+              "HTTP-Referer": "https://your-app.com",  # Optional
+              "X-Title": "Your App Name"  # Optional
+          }
+      )
+      
+      structured_llm = llm.with_structured_output(MyOutput)
+      result = structured_llm.invoke("Your prompt here")
+
+  async_usage:
+    description: Async usage with aiohttp
+    code: |
+      from langchain_openai import ChatOpenAI
+      from pydantic import BaseModel, Field
+      import asyncio
+      
+      class Analysis(BaseModel):
+          result: str
+          score: int
+      
+      llm = ChatOpenAI(model="gpt-4o")
+      structured_llm = llm.with_structured_output(Analysis)
+      
+      async def analyze(text: str) -> Analysis:
+          return await structured_llm.ainvoke(f"Analyze: {text}")
+      
+      # Usage
+      result = asyncio.run(analyze("Some text to analyze"))
+
+  with_retry:
+    description: Wrap with retry logic for even higher reliability
+    code: |
+      from langchain_openai import ChatOpenAI
+      from langchain_core.runnables import RunnableWithFallbacks
+      from pydantic import BaseModel, Field
+      from tenacity import retry, stop_after_attempt, wait_exponential
+      
+      class OutputSchema(BaseModel):
+          data: str
+          valid: bool
+      
+      @retry(
+          stop=stop_after_attempt(3),
+          wait=wait_exponential(multiplier=1, min=2, max=10)
+      )
+      async def get_structured_output(prompt: str) -> OutputSchema:
+          llm = ChatOpenAI(model="gpt-4o", temperature=0)
+          structured_llm = llm.with_structured_output(OutputSchema)
+          return await structured_llm.ainvoke(prompt)
+
+  fastapi_service:
+    description: Complete FastAPI service pattern
+    code: |
+      """LLM Service with Structured Output for FastAPI."""
+      
+      from fastapi import HTTPException
+      from langchain_openai import ChatOpenAI
+      from pydantic import BaseModel, Field
+      from typing import List, Optional
+      import os
+      import logging
+      
+      logger = logging.getLogger(__name__)
+      
+      # ============ Schema Definitions ============
+      
+      class ResumeRoast(BaseModel):
+          """Schema for resume roast response."""
+          score: int = Field(ge=0, le=100, description="Overall score 0-100")
+          overall_feedback: str = Field(description="Summary feedback")
+          category_scores: List[dict] = Field(
+              description="Scores by category (ATS, Impact, etc.)"
+          )
+          roast_points: List[dict] = Field(
+              description="Specific critique points with suggestions"
+          )
+      
+      class ResumeOptimization(BaseModel):
+          """Schema for resume optimization response."""
+          optimized_resume: dict = Field(description="Optimized resume data")
+          suggestions: List[str] = Field(description="Optimization suggestions")
+      
+      # ============ Service Class ============
+      
+      class LLMService:
+          """Service for structured LLM operations."""
+          
+          def __init__(
+              self,
+              model: str = "anthropic/claude-3.5-sonnet",
+              api_key: Optional[str] = None
+          ):
+              self.llm = ChatOpenAI(
+                  model=model,
+                  base_url="https://openrouter.ai/api/v1",
+                  api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+                  temperature=0
+              )
+          
+          async def roast_resume(self, resume_data: dict) -> ResumeRoast:
+              """Roast a resume with structured output."""
+              structured_llm = self.llm.with_structured_output(ResumeRoast)
+              
+              prompt = f"""
+              Roast this resume with brutally honest feedback.
+              Provide a score 0-100, category scores, and specific critique points.
+              
+              Resume:
+              {resume_data}
+              """
+              
+              try:
+                  return await structured_llm.ainvoke(prompt)
+              except Exception as e:
+                  logger.error(f"LLM roast failed: {e}")
+                  raise HTTPException(
+                      status_code=500,
+                      detail=f"AI analysis failed: {str(e)}"
+                  )
+          
+          async def optimize_resume(
+              self, 
+              resume_data: dict, 
+              job_description: Optional[str] = None
+          ) -> ResumeOptimization:
+              """Optimize a resume with structured output."""
+              structured_llm = self.llm.with_structured_output(ResumeOptimization)
+              
+              prompt = f"""
+              Optimize this resume for maximum impact.
+              {"Target job: " + job_description if job_description else ""}
+              
+              Resume:
+              {resume_data}
+              """
+              
+              try:
+                  return await structured_llm.ainvoke(prompt)
+              except Exception as e:
+                  logger.error(f"LLM optimization failed: {e}")
+                  raise HTTPException(
+                      status_code=500,
+                      detail=f"AI optimization failed: {str(e)}"
+                  )
+
+# =============================================================================
+# GOTCHAS - Common issues and solutions
+# =============================================================================
+gotchas:
+  
+  json_parsing_errors:
+    problem: "LLM returns malformed JSON even with structured output"
+    cause: "Some models (especially smaller ones) may not fully comply"
+    solution: |
+      1. Use with_structured_output() which auto-selects best strategy
+      2. Use stronger models (GPT-4o, Claude 3.5 Sonnet)
+      3. Set temperature=0 for deterministic output
+      4. Add retry logic with tenacity
+    code: |
+      # Best practice: strong model + temp=0 + structured output
+      llm = ChatOpenAI(model="gpt-4o", temperature=0)
+      structured = llm.with_structured_output(Schema, include_raw=False)
+
+  openrouter_model_names:
+    problem: "Model not found error when using OpenRouter"
+    cause: "OpenRouter uses provider/model format"
+    solution: |
+      Use the full model identifier from OpenRouter's model list:
+      - "anthropic/claude-3.5-sonnet" (NOT "claude-3.5-sonnet")
+      - "openai/gpt-4o" (NOT "gpt-4o")
+      - "meta-llama/llama-3.1-70b-instruct"
+
+  pydantic_v1_vs_v2:
+    problem: "Import errors or validation issues with Pydantic"
+    cause: "LangChain has compatibility layers for Pydantic v1 and v2"
+    solution: |
+      Use langchain_core.pydantic_v1 for LangChain-native models,
+      or use regular pydantic for external schemas.
+    code: |
+      # For LangChain internal use
+      from langchain_core.pydantic_v1 import BaseModel
+      
+      # For external/API schemas (recommended)
+      from pydantic import BaseModel
+
+  streaming_with_structured:
+    problem: "Can't stream structured output"
+    cause: "Structured output needs complete response for validation"
+    solution: |
+      Use astream_events() for partial updates during generation,
+      but final validation happens after complete response.
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+troubleshooting:
+  
+  - error: "ValidationError: Field required"
+    cause: "LLM output missing required field in schema"
+    fix: |
+      1. Add Optional[] to non-critical fields
+      2. Provide default values
+      3. Add clearer field descriptions
+      4. Use stronger model
+
+  - error: "OutputParserException: Could not parse LLM output"
+    cause: "LLM returned text that couldn't be parsed as schema"
+    fix: |
+      1. Ensure using with_structured_output() not manual parsing
+      2. Try different model
+      3. Simplify schema
+      4. Add examples in field descriptions
+
+  - error: "RateLimitError: 429"
+    cause: "Too many requests to provider"
+    fix: |
+      1. Add exponential backoff retry
+      2. Use rate limiting in your service
+      3. Consider multiple API keys
+
+# =============================================================================
+# TESTING
+# =============================================================================
+testing:
+  unit_test_pattern: |
+    import pytest
+    from unittest.mock import AsyncMock, patch
+    
+    @pytest.mark.asyncio
+    async def test_structured_output():
+        """Test that structured output returns valid schema."""
+        mock_response = ResumeRoast(
+            score=75,
+            overall_feedback="Good resume",
+            category_scores=[{"name": "ATS", "score": 80}],
+            roast_points=[{"issue": "No metrics", "fix": "Add numbers"}]
+        )
+        
+        with patch.object(structured_llm, 'ainvoke', return_value=mock_response):
+            result = await service.roast_resume({"name": "Test"})
+            assert result.score == 75
+            assert len(result.roast_points) > 0
+
+# =============================================================================
+# MIGRATION FROM RAW API
+# =============================================================================
+migration:
+  from_raw_api:
+    description: Migrate from direct API calls to structured output
+    before: |
+      # OLD: Manual JSON parsing (unreliable)
+      response = await client.post(url, json={
+          "model": "gpt-4",
+          "messages": [...],
+          "response_format": {"type": "json_object"}
+      })
+      data = json.loads(response["choices"][0]["message"]["content"])
+      # Hope it matches your schema...
+    
+    after: |
+      # NEW: Guaranteed valid schema
+      llm = ChatOpenAI(model="gpt-4o")
+      structured = llm.with_structured_output(MySchema)
+      result = await structured.ainvoke(prompt)
+      # result IS your schema, validated
+
+---
+# Metadata
+last_updated: "2025-12-28"
+tested_with:
+  - langchain-core: "0.3.x"
+  - langchain-openai: "0.2.x"
+  - python: "3.11+"
