@@ -443,6 +443,131 @@ troubleshooting:
     solution: Add frontend URL to client's Web Origins in admin console
 
 # =============================================================================
+# DOCKER NETWORKING GOTCHAS (CRITICAL)
+# =============================================================================
+docker_gotchas:
+  description: |
+    When running Keycloak in Docker with a frontend on localhost and a 
+    backend in another container, there are several networking issues 
+    that cause silent auth failures. These were discovered during 
+    Genesis deep-cline-v2 testing (December 2025).
+    
+  critical_issues:
+    - id: jwt_issuer_mismatch
+      symptom: "401 Unauthorized on all API calls even when user is logged in"
+      cause: |
+        Token issuer URL mismatch between frontend and backend:
+        - Frontend gets token from: http://localhost:8080
+        - Token issuer field contains: http://localhost:8080/realms/myrealm
+        - Backend validates token against: http://keycloak:8080/realms/myrealm
+        - Backend rejects token because issuers don't match!
+      solution: |
+        Add KC_HOSTNAME and KC_HOSTNAME_PORT to Keycloak container:
+        ```yaml
+        keycloak:
+          environment:
+            KC_HOSTNAME: localhost      # Forces token issuer to use localhost
+            KC_HOSTNAME_PORT: 8080      # Ensures correct port in issuer URL
+        ```
+      alternative: |
+        If you can't set KC_HOSTNAME, disable issuer verification in backend:
+        ```python
+        # Python JWT decode
+        claims = jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            options={
+                "verify_signature": True,   # Keep - validates token is real
+                "verify_exp": True,         # Keep - validates not expired
+                "verify_iss": False,        # DISABLE - Docker network issue
+            }
+        )
+        ```
+        
+    - id: backend_cannot_use_localhost
+      symptom: "Backend cannot fetch JWKS from localhost:8080"
+      cause: |
+        Inside a Docker container, 'localhost' refers to the container itself,
+        not the host machine. The backend cannot reach Keycloak via localhost.
+      solution: |
+        Backend must use Docker DNS name (e.g., 'keycloak:8080') for JWKS fetch,
+        but this creates the issuer mismatch above. Use KC_HOSTNAME fix.
+        
+    - id: config_consistency
+      symptom: "Invalid client credentials or 'client not found' errors"  
+      cause: |
+        When different tasks/scripts create config files independently,
+        they may use different values for the same setting:
+        - init-keycloak.sh creates: client_id = "app-frontend"
+        - .env contains: KEYCLOAK_CLIENT_ID = "app-client"  
+        - keycloak.ts uses: clientId = "app-web"
+      solution: |
+        1. Define single source of truth (e.g., .env file)
+        2. All scripts/code must read from that source
+        3. Validate consistency with pre-deploy check:
+        ```bash
+        grep -r "CLIENT_ID" . --include="*.sh" --include="*.env" --include="*.ts"
+        ```
+        
+    - id: user_not_synced_to_db
+      symptom: "404 Not Found when authenticated user calls API"
+      cause: |
+        Keycloak manages users, but app has local database. User exists in
+        Keycloak but not in app's users table. Service tries to find user
+        by keycloak_id, fails, returns 404.
+      solution: |
+        Implement get_or_create pattern (auto-sync on first API call):
+        ```python
+        async def get_or_create_user(self, user_info: dict) -> User:
+            keycloak_id = user_info.get('keycloak_id')
+            
+            # Try to find existing user
+            user = await db.execute(
+                select(User).where(User.keycloak_id == keycloak_id)
+            ).scalar_one_or_none()
+            
+            if not user:
+                # Auto-create on first API call
+                user = User(
+                    keycloak_id=keycloak_id,
+                    email=user_info.get('email'),
+                    username=user_info.get('username')
+                )
+                db.add(user)
+                await db.commit()
+            
+            return user
+        ```
+
+  recommended_docker_compose: |
+    ```yaml
+    keycloak:
+      image: quay.io/keycloak/keycloak:24.0
+      command: start-dev --import-realm
+      environment:
+        # Admin credentials
+        KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+        KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+        # Database
+        KC_DB: postgres
+        KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+        KC_DB_USERNAME: ${POSTGRES_USER}
+        KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+        # CRITICAL: Hostname settings for Docker dev
+        KC_HOSTNAME: localhost            # <-- Required for issuer match
+        KC_HOSTNAME_PORT: 8080            # <-- Required for port match
+        KC_HOSTNAME_STRICT: "false"       # <-- Allow dev without HTTPS
+        KC_HTTP_ENABLED: "true"           # <-- Required for dev
+        KC_HEALTH_ENABLED: "true"
+      ports:
+        - "8080:8080"
+      depends_on:
+        postgres:
+          condition: service_healthy
+    ```
+
+# =============================================================================
 # NEXT.JS INTEGRATION PATTERNS
 # =============================================================================
 nextjs_integration:
