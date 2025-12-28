@@ -143,6 +143,101 @@ aws:
   database: RDS PostgreSQL for production
 
 # =============================================================================
+# USER INFO SCHEMA (Standard Dict)
+# =============================================================================
+user_info_schema:
+  description: |
+    Standard schema for user information dict returned by get_current_user().
+    All routes and services MUST use these key names to ensure consistency
+    across generated code. This prevents Bug #7 (keycloak_id vs sub mismatch).
+    
+  fields:
+    keycloak_id:
+      jwt_claim: "sub"
+      type: string
+      required: true
+      description: "Unique user identifier from Keycloak"
+      usage: "current_user['keycloak_id']"
+      
+    email:
+      jwt_claim: "email"
+      type: string
+      required: true
+      description: "User's email address"
+      usage: "current_user['email']"
+      
+    username:
+      jwt_claim: "preferred_username"
+      type: string
+      required: true
+      fallback: "email prefix before @"
+      description: "Username for display"
+      usage: "current_user['username']"
+      
+    first_name:
+      jwt_claim: "given_name"
+      type: string
+      required: false
+      description: "User's first name"
+      
+    last_name:
+      jwt_claim: "family_name"
+      type: string
+      required: false
+      description: "User's last name"
+      
+    name:
+      jwt_claim: "name"
+      type: string
+      required: false
+      description: "User's full name"
+      
+    email_verified:
+      jwt_claim: "email_verified"
+      type: boolean
+      required: false
+      default: false
+      description: "Whether email has been verified"
+      
+    roles:
+      jwt_claim: "realm_access.roles"
+      type: "list[string]"
+      required: false
+      default: []
+      description: "List of realm roles assigned to user"
+      
+  implementation: |
+    ```python
+    def extract_user_info(self, claims: Dict) -> Dict:
+        """
+        Extract standardized user info from JWT claims.
+        
+        IMPORTANT: All routes/services must use these key names:
+        - keycloak_id (not 'sub')
+        - email (direct mapping)
+        - username (not 'preferred_username')
+        - roles (extracted from realm_access.roles)
+        """
+        return {
+            "keycloak_id": claims.get("sub"),
+            "email": claims.get("email"),
+            "username": claims.get("preferred_username") or claims.get("email", "").split("@")[0],
+            "first_name": claims.get("given_name"),
+            "last_name": claims.get("family_name"),
+            "name": claims.get("name"),
+            "email_verified": claims.get("email_verified", False),
+            "roles": claims.get("realm_access", {}).get("roles", []),
+        }
+    ```
+    
+  why_not_raw_claims: |
+    We use descriptive names instead of raw JWT claims because:
+    1. Self-documenting: keycloak_id is clearer than sub
+    2. Provider-agnostic: Code is more readable if we switch identity providers
+    3. Prevents confusion: sub might be confused with "subscription"
+    4. Consistency: All generated code uses the same key names
+
+# =============================================================================
 # INTEGRATION PATTERNS (Complete Guide)
 # =============================================================================
 patterns:
