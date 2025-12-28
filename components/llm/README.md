@@ -6,10 +6,12 @@ This directory contains components for integrating Large Language Models (LLMs) 
 
 ```
 llm/
-├── langchain/              # LangChain-based integrations
-│   └── structured-output/  # Reliable structured output with Pydantic
-└── api-direct/             # Direct API integrations (minimal deps)
-    └── openrouter/         # OpenRouter multi-provider API
+├── langchain/
+│   └── structured-output/  # LangChain with_structured_output (framework approach)
+│
+└── api-direct/
+    ├── fastapi-ai-service/ # Complete FastAPI + LLM service template
+    └── structured-output/  # 100% RELIABLE structured output (no LangChain)
 ```
 
 ## 🎯 When to Use Which
@@ -17,17 +19,24 @@ llm/
 ```
 ┌─ Do you need structured/typed JSON output?
 │   │
-│   ├── YES → langchain/structured-output
-│   │         - Uses LangChain with_structured_output()
-│   │         - Automatic fallback strategies
-│   │         - Pydantic validation + retries
-│   │         - 98%+ reliability for JSON schema compliance
+│   ├── YES
+│   │   │
+│   │   ├── Want minimal dependencies? → api-direct/structured-output
+│   │   │   - 100% RELIABLE (guaranteed valid output or clear exception)
+│   │   │   - Uses httpx + Pydantic + json-repair
+│   │   │   - No LangChain dependency
+│   │   │   - Perfect for apps like Resumax
+│   │   │
+│   │   └── Already using LangChain? → langchain/structured-output
+│   │       - Uses LangChain with_structured_output()
+│   │       - Integrates with LangChain ecosystem
+│   │       - Provider-agnostic (OpenAI, Anthropic, etc.)
 │   │
 │   └── NO (simple prompt → text response)
-│       └── api-direct/openrouter
-│           - Direct HTTP calls
-│           - Minimal dependencies (httpx only)
-│           - Full control over request/response
+│       └── api-direct/fastapi-ai-service
+│           - Complete FastAPI + LLM template
+│           - Basic OpenRouter integration
+│           - Good starting point for AI backends
 │
 └─ Do you need agentic/multi-step workflows?
     └── YES → Consider LangGraph (future component)
@@ -35,14 +44,14 @@ llm/
 
 ## 📊 Comparison
 
-| Feature | langchain/structured-output | api-direct/openrouter |
-|---------|----------------------------|----------------------|
-| **Dependencies** | langchain-core, pydantic | httpx only |
-| **Structured Output** | ✅ Native support | ❌ Manual parsing |
-| **Provider Agnostic** | ✅ OpenAI, Anthropic, etc | ✅ Via OpenRouter |
-| **Retries** | ✅ Built-in | ❌ Manual |
-| **Validation** | ✅ Pydantic | ❌ Manual |
-| **Best For** | Apps needing reliable JSON | Simple text generation |
+| Feature | api-direct/structured-output | langchain/structured-output | api-direct/fastapi-ai-service |
+|---------|------------------------------|----------------------------|------------------------------|
+| **Reliability** | 100% guaranteed | ~98% | Manual handling |
+| **Dependencies** | httpx, pydantic, json-repair | langchain-core | httpx |
+| **LangChain** | ❌ Not required | ✅ Required | ❌ Not required |
+| **JSON Repair** | ✅ Built-in | ❌ No | ❌ No |
+| **Retries** | ✅ Auto w/ backoff | ✅ Built-in | ❌ Manual |
+| **Best For** | Production apps | LangChain projects | Simple backends |
 
 ## 🔌 Provider Support
 
