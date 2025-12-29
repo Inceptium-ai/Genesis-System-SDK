@@ -4,7 +4,7 @@
 component:
   name: api-direct-structured-output
   type: llm
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     100% RELIABLE structured output from LLMs using direct API calls.
     No LangChain dependency - uses httpx, Pydantic, and json-repair.
@@ -390,6 +390,45 @@ gotchas:
       4. GPT-4o-mini - Decent for simple schemas
       5. Open source models - High variability
 
+  # V17 LEARNINGS (December 2025)
+  openai_sdk_version:
+    problem: "OpenAI Python SDK version incompatibility with OpenRouter"
+    cause: |
+      If using the openai Python SDK instead of httpx, older versions
+      (openai<1.30.0) have incompatible client initialization parameters.
+      Error: "Client.__init__() got an unexpected keyword argument 'proxies'"
+    solution: |
+      OPTION 1 (Recommended): Use this component's httpx approach - avoids SDK version issues entirely
+      OPTION 2: If using openai SDK, require version >=1.30.0:
+        pip install "openai>=1.30.0"
+      
+      In requirements.txt:
+        openai>=1.30.0  # CRITICAL: older versions incompatible with OpenRouter
+    severity: "HIGH"
+
+  docker_env_vars_not_passed:
+    problem: "OPENROUTER_API_KEY not available in Docker container"
+    cause: |
+      docker-compose.yml must explicitly list environment variables to pass from .env file.
+      Adding OPENROUTER_API_KEY to .env alone is not enough.
+    solution: |
+      Add to docker-compose.yml backend service:
+        backend:
+          environment:
+            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      
+      Then restart with: docker-compose down && docker-compose up -d
+      (docker-compose restart does NOT reload .env)
+    severity: "CRITICAL"
+
+  docker_restart_vs_recreate:
+    problem: "Environment variable changes not taking effect after restart"
+    cause: "docker-compose restart doesn't reload .env file"
+    solution: |
+      Use: docker-compose down && docker-compose up -d
+      NOT: docker-compose restart
+    severity: "MEDIUM"
+
 # =============================================================================
 # REQUIREMENTS.TXT
 # =============================================================================
@@ -401,7 +440,7 @@ requirements: |
 
 ---
 # Metadata
-last_updated: "2025-12-28"
+last_updated: "2025-12-29"
 reliability_guarantee: "100% - Always returns valid schema or raises clear exception"
 tested_with:
   - openrouter: "v1"
