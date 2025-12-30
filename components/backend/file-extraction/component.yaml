@@ -346,6 +346,23 @@ templates:
 # GOTCHAS
 # =============================================================================
 gotchas:
+  # V19 LEARNING (December 2025)
+  pypdf2_package_casing:
+    problem: "ImportError: No module named 'pypdf2'"
+    cause: |
+      Python packages are case-sensitive. The package is named PyPDF2, not pypdf2.
+      AI often generates lowercase imports which fail at runtime.
+    solution: |
+      CORRECT:
+        from PyPDF2 import PdfReader  # ✅ Capital P's
+      
+      WRONG:
+        from pypdf2 import PdfReader  # ❌ Will fail
+      
+      In requirements.txt:
+        PyPDF2>=3.0.0  # Use correct casing here too
+    severity: "MEDIUM"
+    
 
   binary_files_as_text:
     problem: "Preview shows garbage like PK;Zword/numbering.xml..."

@@ -429,6 +429,37 @@ gotchas:
       NOT: docker-compose restart
     severity: "MEDIUM"
 
+  # V19 LEARNINGS (December 2025)
+  pydantic_settings_vs_os_getenv:
+    problem: "os.getenv() doesn't see .env file values in local development"
+    cause: |
+      pydantic-settings (used in config.py) loads .env files internally
+      into its Settings object, but does NOT export to os.environ.
+      
+      So if you use os.getenv("OPENROUTER_API_KEY") directly, it returns None
+      even though the .env file has the key defined.
+    solution: |
+      OPTION 1 (Best Practice): Use centralized pydantic settings:
+        # In your service file:
+        from config import settings
+        
+        class LLMService:
+            def __init__(self):
+                api_key = settings.openrouter_api_key  # ✅ Works!
+      
+      OPTION 2 (Fallback): Load .env at app startup using python-dotenv:
+        # In main.py, VERY FIRST LINES:
+        from dotenv import load_dotenv
+        load_dotenv()  # Now os.getenv() will work
+        
+        # Then import your app
+        from routes import ...
+      
+      DO NOT:
+        api_key = os.getenv("OPENROUTER_API_KEY")  # ❌ Returns None locally
+    severity: "CRITICAL"
+    recurring: "V15, V16, V17, V18, V19"
+
 # =============================================================================
 # REQUIREMENTS.TXT
 # =============================================================================
