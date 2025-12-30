@@ -1,0 +1,440 @@
+# =============================================================================
+# File Extraction Component
+# =============================================================================
+# Extract text from PDF and DOCX file uploads for AI processing.
+# Essential for resume apps, document analysis, and any file upload + AI feature.
+# =============================================================================
+
+name: file-extraction
+version: 1.0.0
+category: backend
+validated: 2024-12-29
+
+description: |
+  Text extraction service for PDF and DOCX files.
+  Essential when building features that accept document uploads and
+  need to send content to AI for analysis.
+  
+  Use this for:
+  - Resume upload + AI analysis
+  - Document processing pipelines
+  - Any file upload that needs text content
+  
+  ⚠️ WARNING: DO NOT use FileReader.readAsText() on PDF/DOCX in frontend!
+  These are binary formats - they must be extracted on the backend.
+
+# =============================================================================
+# DEPENDENCIES
+# =============================================================================
+dependencies:
+  python:
+    required:
+      - pypdf2>=3.0.0         # PDF text extraction
+      - python-docx>=0.8.11   # DOCX text extraction
+    optional:
+      - python-magic>=0.4.27  # MIME type detection (advanced)
+
+# =============================================================================
+# API ENDPOINT
+# =============================================================================
+api:
+  endpoint: POST /api/extract-text
+  content_type: multipart/form-data
+  authentication: required
+  
+  request:
+    field: file
+    type: UploadFile
+    max_size: 10MB
+    accepted_types:
+      - application/pdf
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - application/msword
+  
+  response:
+    format: json
+    schema: |
+      {
+        "text": "extracted text content...",
+        "filename": "resume.pdf",
+        "content_type": "application/pdf",
+        "char_count": 1234
+      }
+  
+  errors:
+    - code: 400
+      message: "Unsupported file type"
+    - code: 400
+      message: "Empty file uploaded"
+    - code: 413
+      message: "File too large"
+    - code: 422
+      message: "Failed to extract text (possibly image-only PDF)"
+
+# =============================================================================
+# TEMPLATE CODE
+# =============================================================================
+templates:
+
+  text_extractor_service: |
+    """
+    Text Extraction Service - PDF and DOCX Support
+    Extracts readable text from binary document files.
+    """
+    
+    import io
+    import logging
+    from typing import Optional
+    
+    from PyPDF2 import PdfReader
+    from docx import Document
+    
+    logger = logging.getLogger(__name__)
+    
+    
+    class TextExtractionError(Exception):
+        """Raised when text extraction fails."""
+        pass
+    
+    
+    class UnsupportedFileTypeError(TextExtractionError):
+        """Raised for unsupported file types."""
+        pass
+    
+    
+    async def extract_text(file_bytes: bytes, content_type: str, filename: str = "") -> str:
+        """
+        Extract text from PDF or DOCX files.
+        
+        Args:
+            file_bytes: Raw file bytes
+            content_type: MIME type of the file
+            filename: Original filename (used for extension fallback)
+        
+        Returns:
+            Extracted text as string
+        
+        Raises:
+            UnsupportedFileTypeError: If file type is not supported
+            TextExtractionError: If extraction fails
+        """
+        # Normalize inputs
+        content_type = content_type.lower() if content_type else ""
+        filename_lower = filename.lower() if filename else ""
+        
+        # PDF extraction
+        if content_type == "application/pdf" or filename_lower.endswith(".pdf"):
+            return await _extract_pdf(file_bytes)
+        
+        # DOCX extraction
+        if content_type in [
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ] or filename_lower.endswith(".docx") or filename_lower.endswith(".doc"):
+            return await _extract_docx(file_bytes)
+        
+        raise UnsupportedFileTypeError(
+            f"Unsupported file type: {content_type or 'unknown'} (filename: {filename})"
+        )
+    
+    
+    async def _extract_pdf(file_bytes: bytes) -> str:
+        """Extract text from PDF file."""
+        try:
+            reader = PdfReader(io.BytesIO(file_bytes))
+            text_parts = []
+            
+            for page_num, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+                else:
+                    logger.warning(f"No text extracted from page {page_num + 1}")
+            
+            full_text = "\n\n".join(text_parts)
+            
+            if not full_text.strip():
+                raise TextExtractionError("PDF appears to be empty or contains only images")
+            
+            return full_text.strip()
+        
+        except Exception as e:
+            if isinstance(e, TextExtractionError):
+                raise
+            logger.error(f"PDF extraction error: {e}")
+            raise TextExtractionError(f"Failed to extract text from PDF: {str(e)}")
+    
+    
+    async def _extract_docx(file_bytes: bytes) -> str:
+        """Extract text from DOCX file."""
+        try:
+            doc = Document(io.BytesIO(file_bytes))
+            text_parts = []
+            
+            # Extract paragraphs
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    text_parts.append(para.text)
+            
+            # Extract table content
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    if row_text:
+                        text_parts.append(row_text)
+            
+            full_text = "\n".join(text_parts)
+            
+            if not full_text.strip():
+                raise TextExtractionError("DOCX appears to be empty")
+            
+            return full_text.strip()
+        
+        except Exception as e:
+            if isinstance(e, TextExtractionError):
+                raise
+            logger.error(f"DOCX extraction error: {e}")
+            raise TextExtractionError(f"Failed to extract text from DOCX: {str(e)}")
+
+  fastapi_endpoint: |
+    """FastAPI endpoint for text extraction."""
+    
+    from fastapi import UploadFile, File, HTTPException, Depends
+    from typing import Dict, Any
+    
+    from services.text_extractor import (
+        extract_text,
+        UnsupportedFileTypeError,
+        TextExtractionError
+    )
+    from auth import get_current_user
+    
+    
+    @app.post("/api/extract-text")
+    async def extract_text_endpoint(
+        file: UploadFile = File(...),
+        user: Dict[str, Any] = Depends(get_current_user)
+    ):
+        """
+        Extract text from uploaded PDF or DOCX file.
+        
+        Returns:
+            {
+                "text": "extracted text content...",
+                "filename": "original.pdf",
+                "content_type": "application/pdf",
+                "char_count": 1234
+            }
+        """
+        # Read file bytes
+        file_bytes = await file.read()
+        
+        if not file_bytes:
+            raise HTTPException(400, "Empty file uploaded")
+        
+        # Validate file size (10MB max)
+        max_size = 10 * 1024 * 1024
+        if len(file_bytes) > max_size:
+            raise HTTPException(413, f"File too large. Maximum: 10MB")
+        
+        try:
+            extracted_text = await extract_text(
+                file_bytes=file_bytes,
+                content_type=file.content_type or "",
+                filename=file.filename or ""
+            )
+            
+            return {
+                "text": extracted_text,
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "char_count": len(extracted_text)
+            }
+        
+        except UnsupportedFileTypeError as e:
+            raise HTTPException(400, str(e))
+        
+        except TextExtractionError as e:
+            raise HTTPException(422, str(e))
+        
+        except Exception as e:
+            raise HTTPException(500, f"Extraction failed: {str(e)}")
+
+  frontend_hook: |
+    /**
+     * useFileUpload hook - Upload file and extract text
+     */
+    import { useState, useCallback } from 'react';
+    import { useAuth } from './useAuth';
+    
+    const API_BASE_URL = 'http://localhost:8000';
+    
+    interface ExtractedFile {
+      text: string;
+      filename: string;
+      contentType: string;
+      charCount: number;
+    }
+    
+    export function useFileUpload() {
+      const [extractedFile, setExtractedFile] = useState<ExtractedFile | null>(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState<string | null>(null);
+      const { token, isAuthenticated } = useAuth();
+    
+      const uploadAndExtract = useCallback(async (file: File): Promise<string> => {
+        if (!isAuthenticated || !token) {
+          throw new Error('Not authenticated');
+        }
+    
+        setLoading(true);
+        setError(null);
+    
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+    
+          const response = await fetch(`${API_BASE_URL}/api/extract-text`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              // Don't set Content-Type - browser will set with boundary
+            },
+            body: formData,
+          });
+    
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+          }
+    
+          const data = await response.json();
+          
+          setExtractedFile({
+            text: data.text,
+            filename: data.filename,
+            contentType: data.content_type,
+            charCount: data.char_count,
+          });
+    
+          return data.text;
+    
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : 'Upload failed';
+          setError(errorMessage);
+          throw e;
+        } finally {
+          setLoading(false);
+        }
+      }, [token, isAuthenticated]);
+    
+      const clearFile = useCallback(() => {
+        setExtractedFile(null);
+        setError(null);
+      }, []);
+    
+      return {
+        extractedFile,
+        loading,
+        error,
+        uploadAndExtract,
+        clearFile,
+      };
+    }
+
+# =============================================================================
+# GOTCHAS
+# =============================================================================
+gotchas:
+
+  binary_files_as_text:
+    problem: "Preview shows garbage like PK;Zword/numbering.xml..."
+    cause: |
+      Frontend using FileReader.readAsText() on binary PDF/DOCX files.
+      DOCX files are ZIP archives (header starts with "PK").
+      PDF files contain binary encoded streams.
+    solution: |
+      NEVER read PDF/DOCX as text on frontend!
+      1. Upload file to /api/extract-text endpoint
+      2. Use returned text for preview
+      3. Send extracted text to AI analysis endpoints
+    severity: "CRITICAL"
+
+  image_only_pdf:
+    problem: "PDF extraction returns empty text"
+    cause: "PDF contains only scanned images, no embedded text"
+    solution: |
+      For production apps needing OCR:
+      - pip install pdf2image pytesseract
+      - Requires tesseract-ocr system package
+      - Add OCR fallback in extraction service
+    severity: "MEDIUM"
+
+  wrong_content_type:
+    problem: "Unsupported file type error for valid files"
+    cause: "Browser may not send correct MIME type"
+    solution: |
+      The extraction service checks BOTH content_type AND filename extension.
+      If one fails, the other may succeed.
+      Ensure files have correct extensions (.pdf, .docx)
+    severity: "LOW"
+
+  large_files:
+    problem: "Timeout or memory issues with large files"
+    cause: "File too large for single request"
+    solution: |
+      Component has 10MB limit by default.
+      For larger files, consider:
+      - Chunked upload
+      - Background processing
+      - Stream-based extraction
+    severity: "MEDIUM"
+
+# =============================================================================
+# USAGE PATTERN
+# =============================================================================
+usage:
+  
+  flow: |
+    Frontend:
+    1. User drops/selects PDF file
+    2. Frontend uploads to /api/extract-text
+    3. Backend extracts text
+    4. Frontend shows text preview
+    5. User clicks "Analyze" / "Roast" / etc.
+    6. Frontend sends extracted text to AI endpoint
+    
+  integration_with_llm: |
+    # After extracting text, send to LLM endpoint
+    async def roast_uploaded_resume(
+        file: UploadFile = File(...),
+        user: Dict[str, Any] = Depends(get_current_user)
+    ):
+        # Step 1: Extract text
+        file_bytes = await file.read()
+        resume_text = await extract_text(file_bytes, file.content_type, file.filename)
+        
+        # Step 2: Send to LLM
+        async with StructuredLLMService() as llm:
+            result = await llm.get_structured_output(
+                prompt=f"Roast this resume: {resume_text}",
+                schema=ResumeRoast
+            )
+        
+        return result
+
+# =============================================================================
+# REQUIREMENTS
+# =============================================================================
+requirements: |
+  pypdf2>=3.0.0
+  python-docx>=0.8.11
+
+---
+# Metadata
+last_updated: "2025-12-29"
+created_from: "V18 testing - PDF/DOCX upload bug discovery"
+composable_with:
+  - llm/api-direct/structured-output
+  - backend/fastapi-base
+  - auth/keycloak

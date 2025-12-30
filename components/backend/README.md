@@ -6,7 +6,8 @@ This directory contains components for building backend services and APIs.
 
 ```
 backend/
-└── fastapi-base/        # Pure FastAPI scaffold (no LLM dependencies)
+├── fastapi-base/        # Pure FastAPI scaffold (no LLM dependencies)
+└── file-extraction/     # PDF/DOCX text extraction for AI processing
 ```
 
 ## 🎯 When to Use Which
