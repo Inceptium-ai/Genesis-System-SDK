@@ -62,6 +62,13 @@ environment:
       description: Database password
       sensitive: true
       
+    - name: KC_HEALTH_ENABLED
+      description: Enable health endpoints (REQUIRED for healthchecks)
+      default: "true"
+      required_note: |
+        MUST be set to "true" for health endpoints to work.
+        Without this, /health/ready returns 404 in Keycloak 22+.
+      
   optional:
     - name: KC_HOSTNAME
       description: External hostname
@@ -73,10 +80,6 @@ environment:
       
     - name: KC_HTTP_ENABLED
       description: Enable HTTP (required for dev)
-      default: "true"
-      
-    - name: KC_HEALTH_ENABLED
-      description: Enable health endpoints
       default: "true"
 
 # =============================================================================
