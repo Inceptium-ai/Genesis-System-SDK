@@ -816,6 +816,164 @@ nextjs_integration:
       expected: Contains "postMessage"
 
 # =============================================================================
+# INIT SCRIPT REQUIREMENTS (V20 BUG FIX)
+# =============================================================================
+init_script_requirements:
+  description: |
+    The init-keycloak.sh script MUST configure the client with all required settings.
+    Missing these causes 400 Bad Request on login/registration endpoints.
+    
+  discovered_in: V20 ResuMax experiment (December 2025)
+  
+  required_client_settings:
+    publicClient: true
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    redirectUris: ["http://localhost:${FRONTEND_PORT}/*"]
+    webOrigins: ["http://localhost:${FRONTEND_PORT}"]
+    attributes:
+      pkce.code.challenge.method: "S256"
+      
+  required_realm_settings:
+    registrationAllowed: true
+    loginWithEmailAllowed: true
+    
+  example_init_script: |
+    #!/bin/bash
+    # init-keycloak.sh - Complete client configuration
+    
+    KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
+    REALM="${KEYCLOAK_REALM:-myrealm}"
+    CLIENT_ID="${KEYCLOAK_CLIENT_ID:-myapp-frontend}"
+    FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
+    
+    # Get admin token
+    ADMIN_TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+      -d "username=admin&password=${KEYCLOAK_ADMIN_PASSWORD:-admin}&grant_type=password&client_id=admin-cli" \
+      | jq -r '.access_token')
+    
+    # Create realm if not exists
+    curl -s -X POST "$KEYCLOAK_URL/admin/realms" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"realm\": \"$REALM\", \"enabled\": true, \"registrationAllowed\": true, \"loginWithEmailAllowed\": true}"
+    
+    # Create/update client with COMPLETE config
+    curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"clientId\": \"$CLIENT_ID\",
+        \"enabled\": true,
+        \"publicClient\": true,
+        \"standardFlowEnabled\": true,
+        \"directAccessGrantsEnabled\": true,
+        \"redirectUris\": [\"$FRONTEND_URL/*\"],
+        \"webOrigins\": [\"$FRONTEND_URL\"],
+        \"attributes\": {\"pkce.code.challenge.method\": \"S256\"}
+      }"
+    
+    echo "✓ Keycloak initialized: $REALM realm, $CLIENT_ID client"
+
+# =============================================================================
+# MULTI-CLIENT AUDIENCE CONFIGURATION (V20 BUG FIX)
+# =============================================================================
+multi_client_audience:
+  description: |
+    When frontend and backend use different Keycloak clients, the backend
+    validates JWT tokens against its client_id in the audience claim.
+    Frontend tokens don't include backend client_id by default → 401 errors.
+    
+    Discovered in: V20 ResuMax experiment (December 2025)
+    
+  symptom: |
+    - User logs in successfully via Keycloak
+    - All API calls return 401 Unauthorized
+    - Backend logs show "Invalid audience" error
+    
+  cause: |
+    Frontend gets token with audience: ["resumax-frontend"]
+    Backend validates token expecting audience: "resumax-backend"
+    Token doesn't contain "resumax-backend" → validation fails
+    
+  solution: |
+    Add an audience mapper to the frontend client that includes the backend
+    client in the token's audience claim.
+    
+  implementation:
+    via_admin_console:
+      steps:
+        - Go to Keycloak Admin Console → Clients → [frontend-client]
+        - Click "Client scopes" tab
+        - Click "[client]-dedicated" scope
+        - Click "Add mapper" → "By configuration"
+        - Select "Audience"
+        - Configure:
+            - Name: "backend-audience"
+            - Included Client Audience: "[backend-client-id]"
+            - Add to ID token: OFF
+            - Add to access token: ON
+        - Save
+        
+    via_api_script: |
+      # Add to init-keycloak.sh or fix-keycloak.sh:
+      
+      echo "Adding audience mapper for backend..."
+      PROTOCOL_MAPPER=$(cat <<EOF
+      {
+        "name": "${BACKEND_CLIENT_ID}-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": false,
+        "config": {
+          "included.client.audience": "${BACKEND_CLIENT_ID}",
+          "id.token.claim": "false",
+          "access.token.claim": "true"
+        }
+      }
+      EOF
+      )
+      
+      # Get frontend client UUID
+      CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$FRONTEND_CLIENT_ID" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+      
+      # Add mapper to frontend client
+      curl -s -X POST \
+        "$KEYCLOAK_URL/admin/realms/$REALM/clients/${CLIENT_UUID}/protocol-mappers/models" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "${PROTOCOL_MAPPER}"
+      
+      echo "✓ Audience mapper added"
+      echo "  Note: Users must log out and log back in to get new token"
+      
+  after_applying: |
+    Users must log out and log back in to get a new token with the updated
+    audience claim. Existing tokens will still fail validation until refreshed.
+    
+  alternative_solutions:
+    disable_audience_check:
+      description: Less secure but simpler
+      code: |
+        # In backend JWT validation:
+        jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            options={
+                "verify_signature": True,
+                "verify_aud": False,  # Disable audience check
+                "verify_exp": True,
+            }
+        )
+      warning: Only use in dev/testing environments
+      
+    use_same_client:
+      description: Use single client for both frontend and backend
+      tradeoff: Less separation of concerns, same token scopes
+
+# =============================================================================
 # SECURITY CHECKLIST
 # =============================================================================
 security:

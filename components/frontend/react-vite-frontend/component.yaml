@@ -130,6 +130,7 @@ templates:
       "dependencies": {
         "react": "18.2.0",
         "react-dom": "18.2.0",
+        "react-router-dom": "6.21.1",
         "lucide-react": "0.303.0"
       },
       "devDependencies": {
@@ -326,6 +327,105 @@ templates:
     }
     
     export default App
+
+# =============================================================================
+# ROUTING PATTERNS (CRITICAL)
+# =============================================================================
+routing:
+  critical_rule: |
+    ⚠️ NEVER use <a href="..."> for internal navigation in React apps!
+    
+    Wrong: <a href="/dashboard">Dashboard</a>
+    Right: <Link to="/dashboard">Dashboard</Link>
+    
+    Using <a href> causes full page reloads which:
+    - Destroys React state (including auth)
+    - Creates poor UX (flash of white)
+    - Breaks SPA behavior
+    
+  setup: |
+    // main.tsx - Wrap app with BrowserRouter
+    import { BrowserRouter } from 'react-router-dom';
+    
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    );
+    
+  navigation: |
+    // Use Link component for all internal navigation
+    import { Link, useNavigate } from 'react-router-dom';
+    
+    // Declarative navigation (in JSX)
+    <Link to="/dashboard">Dashboard</Link>
+    <Link to="/settings" className="nav-link">Settings</Link>
+    
+    // Programmatic navigation (in handlers)
+    const navigate = useNavigate();
+    const handleClick = () => navigate('/dashboard');
+    const handleBack = () => navigate(-1);  // Go back
+    
+  routes: |
+    // App.tsx - Define routes
+    import { Routes, Route, Navigate } from 'react-router-dom';
+    
+    function App() {
+      return (
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      );
+    }
+    
+  protected_routes: |
+    // ProtectedRoute.tsx - Require authentication
+    import { Navigate, useLocation } from 'react-router-dom';
+    import { useAuth } from './AuthProvider';
+    
+    function ProtectedRoute({ children }: { children: ReactNode }) {
+      const { isAuthenticated, isInitialized, login } = useAuth();
+      const location = useLocation();
+      
+      if (!isInitialized) {
+        return <LoadingSpinner />;
+      }
+      
+      if (!isAuthenticated) {
+        sessionStorage.setItem('redirectAfterLogin', location.pathname);
+        login();
+        return null;
+      }
+      
+      return <>{children}</>;
+    }
+    
+    // Usage in routes
+    <Route path="/dashboard" element={
+      <ProtectedRoute>
+        <Dashboard />
+      </ProtectedRoute>
+    } />
+    
+  wireframe_conversion: |
+    When converting wireframes to React:
+    
+    Wireframe HTML:
+      <a href="/dashboard" class="nav-link">Dashboard</a>
+    
+    Convert to React:
+      <Link to="/dashboard" className="nav-link">Dashboard</Link>
+    
+    Wireframe HTML (button style link):
+      <a href="/signup" class="btn btn-primary">Sign Up</a>
+    
+    Convert to React (keep as button with navigate):
+      <button onClick={() => navigate('/signup')} className="btn btn-primary">
+        Sign Up
+      </button>
 
 # =============================================================================
 # API PATTERNS
