@@ -113,11 +113,50 @@ docker:
         postgres:
           condition: service_healthy
       healthcheck:
-        test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
-        interval: 30s
+        test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+        interval: 15s
         timeout: 10s
-        retries: 10
-        start_period: 60s
+        retries: 15
+        start_period: 120s
+
+# =============================================================================
+# DEPLOYMENT & HEALTH CHECK GUIDANCE
+# =============================================================================
+deployment:
+  description: |
+    Keycloak has long startup times, especially on first run (cold start).
+    The deployment manager and docker-compose healthchecks must account for this.
+    
+  cold_start_time: "90-180 seconds"
+  warm_restart_time: "30-60 seconds"
+  
+  healthcheck_settings:
+    recommended:
+      start_period: 120s   # MINIMUM for cold start with DB init
+      interval: 15s        # Check frequently once started
+      timeout: 10s         # Allow time for health endpoint
+      retries: 15          # ~4 minutes total wait after start_period
+    notes: |
+      - KC_HEALTH_ENABLED MUST be "true" for /health/ready to work
+      - First start initializes Liquibase migrations → takes 90-180s
+      - Subsequent restarts are much faster (30-60s)
+      - If using deployment manager, set timeout hints in manifest:
+        ```yaml
+        - name: keycloak
+          health_check:
+            timeout: 180  # seconds - accounts for cold start
+        ```
+        
+  manifest_example: |
+    # deployment/manifest.yaml service entry
+    - name: keycloak
+      type: docker
+      port: 8080
+      health_check:
+        type: http
+        endpoint: "http://localhost:8080/health/ready"
+        timeout: 180  # 3 minutes for cold start
+      startup_order: 2
 
 # =============================================================================
 # OIDC ENDPOINTS
