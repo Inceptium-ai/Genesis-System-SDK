@@ -1,18 +1,15 @@
 # =============================================================================
 # Blueprint C - AI Webapp
 # =============================================================================
-# A complete stack for building AI-powered web applications with:
-# - LLM integration via OpenRouter
-# - Enterprise authentication
-# - Durable AI workflows
-# - Full observability
+# A complete stack for building AI-powered web applications
+# Updated: January 2, 2026 - V3 Schema with Components vs Integrations
 # =============================================================================
 
 name: blueprint-c-ai-webapp
-version: 1.0.0
+version: 2.0.0
 description: Production-ready AI-powered web application stack
-validated: 2024-12-13
-experiment: use-case-1-resume-optimizer
+validated: 2025-01-02
+schema_version: "2.0"
 
 # =============================================================================
 # USE CASES
@@ -26,59 +23,111 @@ use_cases:
   - SaaS applications with AI features
 
 # =============================================================================
-# COMPONENTS
+# COMPONENTS - Generic building blocks (YOU own the code)
+# =============================================================================
+# Components are building blocks without specific protocols.
+# They generate code that you fully control.
 # =============================================================================
 components:
-  # --- Core Application (required) ---
   required:
-    - name: fastapi-ai-service
-      catalog_path: components/fastapi-ai-service
-      purpose: Backend API with LLM integration
+    - name: fastapi-backend
+      catalog: components/backend/fastapi-base
+      purpose: Backend API with REST endpoints
       port: 8000
       
-    - name: react-vite-frontend
-      catalog_path: components/react-vite-frontend
+    - name: react-frontend
+      catalog: components/frontend/react-vite-frontend
       purpose: Modern React SPA with TypeScript
-      port: 3000
+      port: 5173
       
-    - name: nginx-proxy
-      catalog_path: components/nginx-proxy
-      purpose: Reverse proxy, static serving, SSL termination
-      port: 80
-      
-  # --- Infrastructure (recommended) ---
-  recommended:
     - name: postgres
-      catalog_path: components/postgres
+      catalog: components/database/postgres
       purpose: Relational database for user data, app state
       port: 5432
       
+  optional:
     - name: redis
-      catalog_path: components/redis
+      catalog: components/database/redis
       purpose: Caching, rate limiting, session store
       port: 6379
       
-    - name: keycloak
-      catalog_path: components/keycloak
-      purpose: Authentication, authorization, SSO
-      port: 8080
+    - name: file-extraction
+      catalog: components/backend/file-extraction
+      purpose: Extract text from PDF/DOCX files
+      note: Use with resume upload features
 
-  # --- Advanced (optional) ---
+# =============================================================================
+# INTEGRATIONS - Third-party services (THEY own the protocol)
+# =============================================================================
+# Integrations are external services with defined protocols and behavior contracts.
+# They require following specific protocols (OIDC, REST APIs, Webhooks, etc.)
+# =============================================================================
+integrations:
+  required:
+    - name: keycloak
+      catalog: integrations/auth/keycloak
+      purpose: Authentication, authorization, SSO via OIDC
+      port: 8080
+      behavior_contracts:
+        - authorization_code_flow_pkce
+        - backend_token_validation
+        - multi_client_audience
+        
   optional:
-    - name: temporal
-      catalog_path: components/temporal
-      purpose: Durable workflows for long-running AI tasks
-      port: 7233
-      
-    - name: opentelemetry
-      catalog_path: components/opentelemetry
-      purpose: Distributed tracing, metrics
-      ports: [4317, 4318]
-      
-    - name: langfuse
-      catalog_path: components/langfuse
-      purpose: LLM-specific observability and cost tracking
+    - name: openai
+      catalog: integrations/ai/openai
+      purpose: LLM integration via OpenRouter/OpenAI API
       external: true
+      behavior_contracts:
+        - chat_completion
+        - structured_output
+      note: Use with AI features (roast, optimize, chat)
+
+# =============================================================================
+# STANDARD FEATURES
+# =============================================================================
+# Features that this blueprint enables out of the box
+# Each feature points to components/integrations that provide it
+# =============================================================================
+features:
+  - name: user_authentication
+    description: Complete auth flow with OIDC (login, register, logout)
+    provided_by:
+      integration: keycloak
+    behavior_contract: authorization_code_flow_pkce
+    
+  - name: protected_routes
+    description: Frontend routes that require authentication
+    provided_by:
+      component: react-frontend
+      integration: keycloak
+      
+  - name: api_authentication
+    description: Backend validates JWT tokens from frontend
+    provided_by:
+      component: fastapi-backend
+      integration: keycloak
+    behavior_contract: backend_token_validation
+    
+  - name: user_data_persistence
+    description: Store user-specific data in database
+    provided_by:
+      component: fastapi-backend
+      component: postgres
+      
+  - name: ai_chat
+    description: LLM-powered chat interface
+    provided_by:
+      component: fastapi-backend
+      integration: openai
+    optional: true
+    
+  - name: file_upload
+    description: Upload and process files
+    provided_by:
+      component: fastapi-backend
+      component: file-extraction
+    optional: true
 
 # =============================================================================
 # ARCHITECTURE
@@ -86,43 +135,46 @@ components:
 architecture: |
   ┌─────────────────────────────────────────────────────────────────┐
   │                          FRONTEND                                │
-  │  React + Vite + TypeScript + Tailwind                           │
-  │  Port: 3000 (dev) / 80 (nginx prod)                             │
+  │  React + Vite + TypeScript + Tailwind + keycloak-js             │
+  │  Port: 5173                                                      │
   └───────────────────────────┬─────────────────────────────────────┘
-                              │ REST + SSE
+                              │ REST + Bearer Token
                               ▼
   ┌─────────────────────────────────────────────────────────────────┐
-  │                    NGINX (Production)                            │
-  │  - /api/* → FastAPI                                              │
-  │  - /* → Static React                                             │
-  │  - SSL termination                                               │
-  └───────────────────────────┬─────────────────────────────────────┘
-                              │
-                              ▼
-  ┌─────────────────────────────────────────────────────────────────┐
-  │                    FASTAPI AI SERVICE                            │
+  │                    FASTAPI BACKEND                               │
   │  Port: 8000                                                      │
+  │  - JWT validation via Keycloak JWKS                              │
   │  - LLM calls via OpenRouter                                      │
-  │  - Structured prompts                                            │
-  │  - CORS handling                                                 │
+  │  - Business logic + data persistence                             │
   └──────┬──────────────┬──────────────┬───────────────────────────┘
          │              │              │
          ▼              ▼              ▼
   ┌──────────┐   ┌──────────┐   ┌──────────────────┐
-  │ Postgres │   │  Redis   │   │   OpenRouter     │
-  │  (data)  │   │ (cache)  │   │  (LLM provider)  │
+  │ Postgres │   │ Keycloak │   │   OpenRouter     │
+  │  (data)  │   │  (auth)  │   │  (LLM provider)  │
   └──────────┘   └──────────┘   └──────────────────┘
 
 # =============================================================================
-# INTEGRATIONS WIRING
+# WIRING - How components and integrations connect
 # =============================================================================
-integrations:
-  frontend_to_api:
-    protocol: HTTP/REST
-    pattern: /api/* proxied to backend
-    cors: Same domain via nginx (production)
+wiring:
+  frontend_to_keycloak:
+    protocol: OIDC
+    library: keycloak-js
+    flow: Authorization Code with PKCE
+    see_contract: integrations/auth/keycloak → authorization_code_flow_pkce
     
-  api_to_llm:
+  frontend_to_backend:
+    protocol: HTTP/REST
+    auth: Bearer token (from Keycloak)
+    
+  backend_to_keycloak:
+    protocol: HTTPS
+    purpose: Fetch JWKS for token validation
+    url: "{KEYCLOAK_URL}/realms/{realm}/protocol/openid-connect/certs"
+    see_contract: integrations/auth/keycloak → backend_token_validation
+    
+  backend_to_llm:
     provider: openrouter
     protocol: HTTPS
     models:
@@ -130,43 +182,48 @@ integrations:
       - anthropic/claude-sonnet-4   # Balanced
       - openai/gpt-4o               # Alternative
       
-  api_to_database:
+  backend_to_database:
     protocol: PostgreSQL
     pooling: SQLAlchemy async
-    
-  api_to_cache:
-    protocol: Redis
-    uses:
-      - Rate limiting
-      - Session cache
-      - Response cache
 
 # =============================================================================
 # ENVIRONMENT VARIABLES
 # =============================================================================
 environment:
+  # Secrets (required)
   required:
     - name: OPENROUTER_API_KEY
       description: API key from openrouter.ai
       obtain: https://openrouter.ai/keys
       
-  recommended:
+    - name: KEYCLOAK_ADMIN_PASSWORD
+      description: Keycloak admin password
+      
     - name: POSTGRES_PASSWORD
       description: Database password
-      default: localdevpassword123
       
-    - name: REDIS_PASSWORD  
-      description: Redis password
-      default: localredis
+  # Configuration (have defaults)
+  recommended:
+    - name: APP_NAME
+      description: Application name (used in container names)
+      default: myapp
+      
+    - name: KEYCLOAK_REALM
+      description: Keycloak realm name
+      default: ${APP_NAME}
+      
+    - name: FRONTEND_CLIENT_ID
+      description: Keycloak frontend client
+      default: ${APP_NAME}-frontend
+      
+    - name: BACKEND_CLIENT_ID
+      description: Keycloak backend client
+      default: ${APP_NAME}-backend
       
   optional:
     - name: OPENROUTER_MODEL
       description: Default LLM model
       default: anthropic/claude-haiku-4.5
-      
-    - name: ALLOWED_ORIGINS
-      description: CORS allowed origins (production)
-      default: "*"
 
 # =============================================================================
 # QUICK START
@@ -174,26 +231,29 @@ environment:
 quick_start:
   steps:
     - step: 1
-      description: Clone and setup
-      command: |
-        cd catalog/blueprints/blueprint-c-ai-webapp
-        cp .env.example .env
-        
+      description: Create project from blueprint
+      command: genesis init --blueprint blueprint-c-ai-webapp --name myapp
+      
     - step: 2
-      description: Add API key
+      description: Configure secrets
       command: |
-        # Edit .env and add your OPENROUTER_API_KEY
+        cp .env.example .env
+        # Edit .env with your API keys
         
     - step: 3
       description: Start all services
       command: docker compose up -d
       
     - step: 4
-      description: Access
+      description: Initialize Keycloak
+      command: ./scripts/init-keycloak.sh
+      
+    - step: 5
+      description: Access application
       urls:
-        frontend: http://localhost:3000
-        api_docs: http://localhost:8000/docs
-        keycloak: http://localhost:8081
+        frontend: http://localhost:5173
+        backend_api: http://localhost:8000/docs
+        keycloak_admin: http://localhost:8080/admin
 
 # =============================================================================
 # AWS DEPLOYMENT
@@ -203,12 +263,12 @@ aws_deployment:
     frontend: S3 + CloudFront
     backend: ECS Fargate
     database: RDS PostgreSQL
-    cache: ElastiCache Redis
+    auth: ECS Fargate (Keycloak) or Amazon Cognito
     secrets: AWS Secrets Manager
     
   estimated_cost:
-    development: $20-50/month
-    production: $100-300/month
+    development: $30-60/month
+    production: $150-400/month
     
   services:
     - name: frontend
@@ -221,60 +281,62 @@ aws_deployment:
       memory: 512
       desired_count: 2
       
+    - name: keycloak
+      service: ECS Fargate
+      cpu: 512
+      memory: 1024
+      note: Can migrate to Amazon Cognito for managed auth
+      
     - name: database
       service: RDS PostgreSQL
       instance: db.t3.micro (dev) / db.t3.small (prod)
-      
-    - name: cache
-      service: ElastiCache
-      instance: cache.t3.micro
 
 # =============================================================================
-# CUSTOMIZATION POINTS
-# =============================================================================
-customization:
-  frontend:
-    - src/App.tsx: Main application component
-    - src/index.css: Global styles (Tailwind)
-    - vite.config.ts: Build configuration
-    
-  backend:
-    - app/main.py: API endpoints
-    - app/prompts/: LLM prompt templates
-    - app/models/: Pydantic schemas
-    
-  infrastructure:
-    - docker-compose.yml: Service configuration
-    - nginx.conf: Proxy rules
-    - .env: Environment variables
-
-# =============================================================================
-# GOTCHAS & LESSONS LEARNED
+# GOTCHAS - LESSONS LEARNED
 # =============================================================================
 gotchas:
+  keycloak:
+    - See integrations/auth/keycloak/integration.yaml for all auth gotchas
+    - Key issues: issuer mismatch, audience config, Docker networking
+    
   local_development:
     - issue: Port conflicts on macOS
-      solution: Use `lsof -i :PORT` before starting, use non-standard ports
+      solution: Use lsof -i :PORT before starting, use non-standard ports
       
-    - issue: CORS errors with file:// URLs
+    - issue: CORS errors
       solution: Use allow_origins=["*"] in dev, restrict in production
       
-    - issue: Process suspension in background
-      solution: Use Docker or start servers in foreground
+  llm_integration:
+    - issue: API key not passed to Docker
+      solution: Ensure OPENROUTER_API_KEY is in .env and docker-compose
       
-  production:
-    - issue: CORS with credentials
-      solution: Can't use "*" with credentials=True, specify exact origins
-      
-    - issue: SSL certificates
-      solution: Use AWS ACM for free certificates
+    - issue: Rate limiting
+      solution: Implement backoff, use redis for rate limit tracking
 
 # =============================================================================
-# FILES INCLUDED
+# FILES GENERATED
 # =============================================================================
 files:
   - docker-compose.yml          # Full stack orchestration
   - .env.example                 # Environment template
-  - services/ai-service/        # FastAPI backend
-  - services/frontend/          # React frontend
-  - config/                      # Service configurations
+  - scripts/init-keycloak.sh    # Keycloak initialization (from integration)
+  - backend/                     # FastAPI backend
+  - frontend/                    # React frontend
+  - config/keycloak/            # Realm configuration
+
+# =============================================================================
+# VERSION HISTORY
+# =============================================================================
+version_history:
+  - version: 2.0.0
+    date: 2025-01-02
+    changes:
+      - Separated components from integrations
+      - Added behavior contracts reference for auth
+      - Added standard features metadata
+      - Updated to V3 schema
+
+  - version: 1.0.0
+    date: 2024-12-13
+    changes:
+      - Initial blueprint

@@ -1,0 +1,969 @@
+# =============================================================================
+# Keycloak Identity & Access Management Integration
+# =============================================================================
+# Enterprise-grade OIDC identity provider with OAuth 2.0, SSO, and RBAC
+# Validated in: V15-V20 Deep-Cline experiments (December 2025)
+# =============================================================================
+
+name: keycloak
+type: integration
+category: auth
+version: 24.0.x
+source: quay.io/keycloak/keycloak:24.0
+
+# Protocol and standards implemented
+protocol: OIDC
+protocol_version: "1.0"
+oauth_version: "2.0"
+
+description: |
+  Enterprise-grade OIDC identity provider with OAuth 2.0, SSO, and RBAC.
+  Provides authentication for all Genesis blueprints with support for 
+  social login, MFA, user federation, and multi-client configurations.
+
+# =============================================================================
+# BEHAVIOR CONTRACTS
+# =============================================================================
+# These contracts define EXACTLY what should happen for each auth flow
+# Discovered and refined through V15-V20 testing
+# =============================================================================
+
+behavior_contracts:
+
+  # ---------------------------------------------------------------------------
+  # Contract 1: Authorization Code Flow with PKCE
+  # ---------------------------------------------------------------------------
+  - name: authorization_code_flow_pkce
+    description: Complete login flow for SPA applications
+    trigger: User clicks "Login" button in frontend application
+    
+    preconditions:
+      - Keycloak is running and healthy
+      - Realm is configured with correct client
+      - Client has correct redirect URIs configured
+      - PKCE is enabled on the client
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Generate code_verifier (random string) and code_challenge (SHA256 hash)
+        system: keycloak-js handles this automatically
+        
+      - step: 2
+        actor: frontend
+        action: Call keycloak.login()
+        system: Browser redirects to Keycloak authorization endpoint
+        url_pattern: "{keycloak_url}/realms/{realm}/protocol/openid-connect/auth"
+        params:
+          - client_id
+          - redirect_uri
+          - response_type=code
+          - code_challenge
+          - code_challenge_method=S256
+          - scope=openid profile email
+      
+      - step: 3
+        actor: user
+        action: User enters credentials on Keycloak login page
+        system: Keycloak validates credentials against user store
+        
+      - step: 4
+        actor: keycloak
+        action: Validates credentials and generates authorization code
+        system: Redirects to frontend callback URL with code
+        url_pattern: "{redirect_uri}?code={authorization_code}&state={state}"
+        
+      - step: 5
+        actor: frontend
+        action: Receives callback with authorization code
+        system: keycloak-js exchanges code for tokens using code_verifier
+        url_pattern: "{keycloak_url}/realms/{realm}/protocol/openid-connect/token"
+        
+      - step: 6
+        actor: keycloak
+        action: Validates code and PKCE, issues tokens
+        system: Returns access_token, refresh_token, id_token
+        
+      - step: 7
+        actor: frontend
+        action: Stores tokens in memory (NOT localStorage)
+        system: Updates auth context with user info from id_token
+        
+    validation:
+      - check: Access token contains expected audience (frontend client)
+        method: Decode JWT and check 'aud' claim
+        
+      - check: Token can be validated against JWKS endpoint
+        method: Fetch JWKS, verify signature
+        
+      - check: Refresh token can obtain new access token
+        method: Call token endpoint with grant_type=refresh_token
+        
+      - check: User info is available in auth context
+        method: Verify keycloak.tokenParsed contains user claims
+
+    error_handling:
+      - trigger: Invalid client_id
+        keycloak_error: "Client not found"
+        solution: Verify client exists in realm, check for typos
+        
+      - trigger: Invalid redirect_uri
+        keycloak_error: "Invalid redirect uri"
+        solution: Add exact frontend URL to client's Valid Redirect URIs
+        
+      - trigger: PKCE validation failed
+        keycloak_error: "PKCE validation failed"
+        solution: Ensure code_challenge_method=S256 is supported
+
+  # ---------------------------------------------------------------------------
+  # Contract 2: Backend Token Validation
+  # ---------------------------------------------------------------------------
+  - name: backend_token_validation
+    description: Backend validates JWT from frontend API requests
+    trigger: Frontend makes API request with Bearer token
+    
+    preconditions:
+      - Backend has KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID configured
+      - Backend can reach Keycloak JWKS endpoint
+      - Token has not expired
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Includes token in Authorization header
+        format: "Authorization: Bearer {access_token}"
+        
+      - step: 2
+        actor: backend
+        action: Extracts token from Authorization header
+        code_pattern: "credentials.credentials from HTTPBearer()"
+        
+      - step: 3
+        actor: backend
+        action: Fetches JWKS from Keycloak
+        url_pattern: "{keycloak_url}/realms/{realm}/protocol/openid-connect/certs"
+        caching: Results should be cached (keys rarely change)
+        
+      - step: 4
+        actor: backend
+        action: Validates token signature using public key
+        algorithm: RS256
+        
+      - step: 5
+        actor: backend
+        action: Validates token claims
+        claims_to_verify:
+          - exp: Token not expired
+          - aud: Audience includes backend client_id
+          - iss: Issuer matches Keycloak URL
+        
+      - step: 6
+        actor: backend
+        action: Extracts user info from validated token
+        user_info_schema:
+          keycloak_id: claims["sub"]
+          email: claims["email"]
+          username: claims["preferred_username"]
+          roles: claims["realm_access"]["roles"]
+    
+    validation:
+      - check: Invalid tokens return 401 Unauthorized
+        method: Send request with expired/malformed token
+        
+      - check: Valid tokens allow request to proceed
+        method: Send request with fresh valid token
+        
+      - check: User info correctly extracted
+        method: Log user info in endpoint, verify values
+
+    error_handling:
+      - trigger: Token expired
+        http_status: 401
+        error_body: '{"detail": "Token expired"}'
+        frontend_action: Call keycloak.updateToken() or keycloak.login()
+        
+      - trigger: Invalid signature
+        http_status: 401
+        error_body: '{"detail": "Invalid token"}'
+        frontend_action: Clear token, redirect to login
+        
+      - trigger: Invalid audience
+        http_status: 401
+        error_body: '{"detail": "Invalid audience"}'
+        solution: Add audience mapper to frontend client (see multi_client_audience)
+
+  # ---------------------------------------------------------------------------
+  # Contract 3: Multi-Client Audience Configuration
+  # ---------------------------------------------------------------------------
+  - name: multi_client_audience
+    description: Configure frontend token to include backend audience
+    trigger: Backend rejects valid frontend token with "Invalid audience"
+    
+    context: |
+      When frontend and backend use different Keycloak clients:
+      - Frontend client: resumax-frontend (public, receives tokens)
+      - Backend client: resumax-backend (confidential, validates tokens)
+      
+      The problem: Frontend gets token with audience=["resumax-frontend"]
+      but backend expects audience to include "resumax-backend".
+      
+      Solution: Add audience mapper to frontend client.
+    
+    steps:
+      - step: 1
+        actor: admin
+        action: Open Keycloak Admin Console
+        url: "{keycloak_url}/admin"
+        
+      - step: 2
+        actor: admin
+        action: Navigate to Clients > {frontend-client} > Client scopes
+        
+      - step: 3
+        actor: admin
+        action: Click "{frontend-client}-dedicated" scope
+        
+      - step: 4
+        actor: admin
+        action: Click "Add mapper" > "By configuration" > "Audience"
+        
+      - step: 5
+        actor: admin
+        action: Configure mapper
+        settings:
+          name: "backend-audience"
+          included_client_audience: "{backend-client-id}"
+          add_to_id_token: false
+          add_to_access_token: true
+          
+      - step: 6
+        actor: admin
+        action: Save mapper
+        
+      - step: 7
+        actor: user
+        action: Log out and log back in to get new token
+        note: Existing tokens will NOT have updated audience
+    
+    implementation_via_api: |
+      # Can be added to init-keycloak.sh
+      PROTOCOL_MAPPER=$(cat <<EOF
+      {
+        "name": "${BACKEND_CLIENT_ID}-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": false,
+        "config": {
+          "included.client.audience": "${BACKEND_CLIENT_ID}",
+          "id.token.claim": "false",
+          "access.token.claim": "true"
+        }
+      }
+      EOF
+      )
+      
+      # Get frontend client UUID
+      CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$FRONTEND_CLIENT_ID" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+      
+      # Add mapper to frontend client
+      curl -s -X POST \
+        "$KEYCLOAK_URL/admin/realms/$REALM/clients/${CLIENT_UUID}/protocol-mappers/models" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "${PROTOCOL_MAPPER}"
+    
+    validation:
+      - check: Token contains both audiences
+        method: Decode access token, verify ["frontend-client", "backend-client"] in aud
+      
+      - check: Backend accepts updated token
+        method: Make API call, expect 200 not 401
+
+  # ---------------------------------------------------------------------------
+  # Contract 4: User Registration
+  # ---------------------------------------------------------------------------
+  - name: user_registration
+    description: New user self-registration through Keycloak
+    trigger: User clicks "Sign Up" or "Register" button
+    
+    preconditions:
+      - registrationAllowed: true in realm settings
+      - Client has correct redirect URIs
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Call keycloak.register()
+        system: Browser redirects to Keycloak registration page
+        
+      - step: 2
+        actor: keycloak
+        action: Shows registration form
+        fields:
+          - username (optional if loginWithEmailAllowed)
+          - email
+          - password
+          - confirm_password
+          - first_name (optional)
+          - last_name (optional)
+          
+      - step: 3
+        actor: user
+        action: Fills out registration form and submits
+        
+      - step: 4
+        actor: keycloak
+        action: Creates user in database, optionally sends verification email
+        
+      - step: 5
+        actor: keycloak
+        action: Automatically logs user in and redirects to app
+        
+    validation:
+      - check: Registration page is accessible
+        method: keycloak.register() redirects to registration URL
+        
+      - check: New user can be created
+        method: Complete registration flow, verify redirect back to app
+        
+      - check: New user is authenticated after registration
+        method: Check keycloak.authenticated === true after redirect
+
+    error_handling:
+      - trigger: Registration disabled
+        keycloak_error: "Registration is disabled"
+        solution: Enable registrationAllowed in realm settings
+        
+      - trigger: Email already exists
+        keycloak_error: "Email already exists"
+        solution: User already has account, direct to login
+
+  # ---------------------------------------------------------------------------
+  # Contract 5: Token Refresh
+  # ---------------------------------------------------------------------------
+  - name: token_refresh
+    description: Automatically refresh access token before expiry
+    trigger: Access token is about to expire (or has expired)
+    
+    preconditions:
+      - User has valid refresh_token
+      - Refresh token has not expired
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Detect token expiring (onTokenExpired callback or proactive check)
+        timing: Typically 30 seconds before expiry
+        
+      - step: 2
+        actor: frontend
+        action: Call keycloak.updateToken(minValidity)
+        param: minValidity = seconds of validity required
+        
+      - step: 3
+        actor: keycloak-js
+        action: Calls token endpoint with grant_type=refresh_token
+        url_pattern: "{keycloak_url}/realms/{realm}/protocol/openid-connect/token"
+        
+      - step: 4
+        actor: keycloak
+        action: Validates refresh token, issues new access token
+        
+      - step: 5
+        actor: frontend
+        action: Updates stored tokens, continues operation
+    
+    implementation: |
+      // In AuthProvider.tsx
+      keycloak.onTokenExpired = () => {
+        keycloak.updateToken(30)
+          .then(refreshed => {
+            if (refreshed) {
+              setToken(keycloak.token);
+              console.log('Token refreshed');
+            }
+          })
+          .catch(() => {
+            keycloak.login(); // Refresh failed, re-login
+          });
+      };
+    
+    validation:
+      - check: Token refresh happens automatically
+        method: Wait for token to near expiry, verify new token issued
+        
+      - check: API calls continue to work after refresh
+        method: Make API call after token refresh, expect success
+
+    error_handling:
+      - trigger: Refresh token expired
+        keycloak_error: "Session expired"
+        solution: User must log in again (keycloak.login())
+
+  # ---------------------------------------------------------------------------
+  # Contract 6: Logout Flow
+  # ---------------------------------------------------------------------------
+  - name: logout_flow
+    description: Complete logout clearing all session state
+    trigger: User clicks "Logout" button
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Call keycloak.logout({ redirectUri })
+        note: redirectUri is where user goes after logout
+        
+      - step: 2
+        actor: keycloak-js
+        action: Redirects to Keycloak logout endpoint
+        url_pattern: "{keycloak_url}/realms/{realm}/protocol/openid-connect/logout"
+        
+      - step: 3
+        actor: keycloak
+        action: Invalidates server-side session
+        
+      - step: 4
+        actor: keycloak
+        action: Redirects to specified redirectUri
+        
+      - step: 5
+        actor: frontend
+        action: User lands on logged-out page
+    
+    implementation: |
+      // In AuthProvider.tsx
+      const logout = () => {
+        keycloak.logout({
+          redirectUri: window.location.origin + '/'
+        });
+      };
+    
+    validation:
+      - check: Session is invalidated
+        method: After logout, refresh page, verify not authenticated
+        
+      - check: Tokens are cleared
+        method: Check keycloak.token is undefined after logout
+
+  # ---------------------------------------------------------------------------
+  # Contract 7: Silent SSO Check
+  # ---------------------------------------------------------------------------
+  - name: silent_sso_check
+    description: Check if user is logged in without showing login page
+    trigger: User visits app (page load or refresh)
+    
+    preconditions:
+      - public/silent-check-sso.html exists
+      - Client has silent-check-sso.html in redirect URIs
+    
+    steps:
+      - step: 1
+        actor: frontend
+        action: Initialize Keycloak with onLoad='check-sso'
+        
+      - step: 2
+        actor: keycloak-js
+        action: Opens hidden iframe to Keycloak
+        
+      - step: 3
+        actor: iframe
+        action: Keycloak checks for existing session cookie
+        
+      - step: 4a_authenticated:
+        condition: User has active Keycloak session
+        actor: keycloak
+        action: Returns tokens via postMessage
+        result: keycloak.authenticated = true
+        
+      - step: 4b_not_authenticated:
+        condition: No active Keycloak session
+        actor: keycloak
+        action: Returns "not logged in" via postMessage
+        result: keycloak.authenticated = false
+    
+    required_file:
+      path: public/silent-check-sso.html
+      content: |
+        <!doctype html>
+        <html>
+        <head><title>Silent Check SSO</title></head>
+        <body>
+          <script>parent.postMessage(location.href, location.origin);</script>
+        </body>
+        </html>
+    
+    validation:
+      - check: Previously logged-in user is still authenticated
+        method: Login, close tab, open new tab, verify still authenticated
+        
+      - check: User without session is NOT automatically logged in
+        method: Clear cookies, visit app, verify not authenticated
+
+    error_handling:
+      - trigger: iframe loading hangs
+        symptom: App shows loading forever
+        cause: Third-party cookies blocked, silent-check-sso.html missing
+        solution: Add silentCheckSsoRedirectUri to Keycloak init options
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+configuration:
+  required:
+    - name: realm_name
+      description: Keycloak realm name
+      example: "resumax"
+      
+    - name: frontend_client_id
+      description: Client ID for frontend (public client)
+      example: "resumax-frontend"
+      
+    - name: admin_password
+      description: Keycloak admin console password
+      sensitive: true
+      
+  optional:
+    - name: backend_client_id
+      description: Client ID for backend (confidential or public)
+      example: "resumax-backend"
+      note: Only needed if backend validates tokens separately
+      
+    - name: admin_username
+      description: Keycloak admin username
+      default: "admin"
+
+# =============================================================================
+# ENVIRONMENT VARIABLES
+# =============================================================================
+environment_variables:
+  keycloak_service:
+    - name: KEYCLOAK_ADMIN
+      description: Admin username for console
+      default: admin
+      
+    - name: KEYCLOAK_ADMIN_PASSWORD
+      description: Admin console password
+      sensitive: true
+      required: true
+      
+    - name: KC_DB
+      description: Database type
+      default: postgres
+      
+    - name: KC_DB_URL
+      description: JDBC connection URL
+      format: "jdbc:postgresql://postgres:5432/keycloak"
+      
+    - name: KC_DB_USERNAME
+      description: Database username
+      
+    - name: KC_DB_PASSWORD
+      description: Database password
+      sensitive: true
+      
+    - name: KC_HOSTNAME
+      description: External hostname (CRITICAL for Docker)
+      default: localhost
+      required_note: Required for token issuer to match frontend
+      
+    - name: KC_HOSTNAME_PORT
+      description: External port
+      default: "8080"
+      
+    - name: KC_HEALTH_ENABLED
+      description: Enable health endpoints
+      default: "true"
+      required_note: MUST be true for healthchecks
+      
+    - name: KC_HTTP_ENABLED
+      description: Enable HTTP (for dev)
+      default: "true"
+      
+    - name: KC_HOSTNAME_STRICT
+      description: Strict hostname check
+      default: "false"
+      note: Set to false for local dev
+      
+  frontend:
+    - name: VITE_KEYCLOAK_URL
+      description: Keycloak URL for frontend
+      example: "http://localhost:8080"
+      
+    - name: VITE_KEYCLOAK_REALM
+      description: Realm name
+      example: "resumax"
+      
+    - name: VITE_KEYCLOAK_CLIENT_ID
+      description: Frontend client ID
+      example: "resumax-frontend"
+      
+  backend:
+    - name: KEYCLOAK_URL
+      description: Keycloak URL for backend (Docker DNS name)
+      example: "http://keycloak:8080"
+      note: Use Docker network name, not localhost
+      
+    - name: KEYCLOAK_REALM
+      description: Realm name
+      
+    - name: KEYCLOAK_CLIENT_ID
+      description: Backend client ID for audience validation
+
+# =============================================================================
+# PORTS
+# =============================================================================
+ports:
+  - port: 8080
+    protocol: HTTP
+    purpose: Main web interface and OIDC endpoints
+    conflicts_with:
+      - Tomcat defaults
+      - Jenkins defaults
+      - Spring Boot defaults
+    recommendation: Use 8084 for local dev to avoid conflicts
+    
+  - port: 8443
+    protocol: HTTPS
+    purpose: Secure connections (production)
+
+# =============================================================================
+# DOCKER CONFIGURATION
+# =============================================================================
+docker:
+  image: quay.io/keycloak/keycloak:24.0
+  command: start-dev --import-realm
+  
+  compose_snippet: |
+    keycloak:
+      image: quay.io/keycloak/keycloak:24.0
+      container_name: ${APP_NAME}-keycloak
+      command: start-dev --import-realm
+      environment:
+        KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+        KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+        KC_DB: postgres
+        KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+        KC_DB_USERNAME: ${POSTGRES_USER}
+        KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+        # CRITICAL: These must be set for Docker
+        KC_HOSTNAME: localhost
+        KC_HOSTNAME_PORT: "8080"
+        KC_HOSTNAME_STRICT: "false"
+        KC_HTTP_ENABLED: "true"
+        KC_HEALTH_ENABLED: "true"
+      volumes:
+        - ./config/keycloak/${APP_NAME}-realm.json:/opt/keycloak/data/import/${APP_NAME}-realm.json:ro
+      ports:
+        - "8080:8080"
+      depends_on:
+        postgres:
+          condition: service_healthy
+      healthcheck:
+        test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+        interval: 30s
+        timeout: 10s
+        retries: 10
+        start_period: 60s
+
+  realm_import_path: /opt/keycloak/data/import/
+
+# =============================================================================
+# INIT SCRIPT TEMPLATE (V20 BUG FIXES INCLUDED)
+# =============================================================================
+init_script_template: |
+  #!/bin/bash
+  # init-keycloak.sh - Complete Keycloak initialization
+  # Includes all V15-V20 bug fixes
+  
+  set -e
+  
+  KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
+  REALM="${KEYCLOAK_REALM:-myrealm}"
+  FRONTEND_CLIENT="${FRONTEND_CLIENT_ID:-myapp-frontend}"
+  BACKEND_CLIENT="${BACKEND_CLIENT_ID:-myapp-backend}"
+  FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
+  
+  echo "Waiting for Keycloak to be ready..."
+  until curl -sf "$KEYCLOAK_URL/health/ready" > /dev/null 2>&1; do
+    sleep 2
+  done
+  echo "✓ Keycloak is ready"
+  
+  # Get admin token
+  echo "Getting admin token..."
+  ADMIN_TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+    -d "username=admin&password=${KEYCLOAK_ADMIN_PASSWORD:-admin}&grant_type=password&client_id=admin-cli" \
+    | jq -r '.access_token')
+  
+  if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
+    echo "❌ Failed to get admin token"
+    exit 1
+  fi
+  echo "✓ Got admin token"
+  
+  # Create realm
+  echo "Creating realm: $REALM"
+  curl -s -X POST "$KEYCLOAK_URL/admin/realms" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"realm\": \"$REALM\",
+      \"enabled\": true,
+      \"registrationAllowed\": true,
+      \"loginWithEmailAllowed\": true,
+      \"resetPasswordAllowed\": true
+    }" || echo "Realm may already exist"
+  echo "✓ Realm configured"
+  
+  # Create frontend client (public, for SPA)
+  echo "Creating frontend client: $FRONTEND_CLIENT"
+  curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"clientId\": \"$FRONTEND_CLIENT\",
+      \"enabled\": true,
+      \"publicClient\": true,
+      \"standardFlowEnabled\": true,
+      \"directAccessGrantsEnabled\": true,
+      \"redirectUris\": [\"$FRONTEND_URL/*\"],
+      \"webOrigins\": [\"$FRONTEND_URL\"],
+      \"attributes\": {\"pkce.code.challenge.method\": \"S256\"}
+    }" || echo "Frontend client may already exist"
+  echo "✓ Frontend client configured"
+  
+  # Create backend client (for audience validation)
+  echo "Creating backend client: $BACKEND_CLIENT"
+  curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"clientId\": \"$BACKEND_CLIENT\",
+      \"enabled\": true,
+      \"publicClient\": false,
+      \"serviceAccountsEnabled\": true
+    }" || echo "Backend client may already exist"
+  echo "✓ Backend client configured"
+  
+  # Add audience mapper to frontend client (V20-7 fix)
+  echo "Adding audience mapper..."
+  FRONTEND_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$FRONTEND_CLIENT" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+  
+  if [ -n "$FRONTEND_UUID" ] && [ "$FRONTEND_UUID" != "null" ]; then
+    curl -s -X POST \
+      "$KEYCLOAK_URL/admin/realms/$REALM/clients/$FRONTEND_UUID/protocol-mappers/models" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"name\": \"$BACKEND_CLIENT-audience\",
+        \"protocol\": \"openid-connect\",
+        \"protocolMapper\": \"oidc-audience-mapper\",
+        \"consentRequired\": false,
+        \"config\": {
+          \"included.client.audience\": \"$BACKEND_CLIENT\",
+          \"id.token.claim\": \"false\",
+          \"access.token.claim\": \"true\"
+        }
+      }" || echo "Audience mapper may already exist"
+    echo "✓ Audience mapper configured"
+  fi
+  
+  echo ""
+  echo "=========================================="
+  echo "✓ Keycloak initialization complete!"
+  echo "=========================================="
+  echo "Realm: $REALM"
+  echo "Frontend Client: $FRONTEND_CLIENT"
+  echo "Backend Client: $BACKEND_CLIENT"
+  echo "Admin Console: $KEYCLOAK_URL/admin"
+  echo ""
+
+# =============================================================================
+# GOTCHAS - LESSONS LEARNED FROM V15-V20 TESTING
+# =============================================================================
+# These issues caused auth failures in Genesis experiments.
+# Each gotcha includes the bug ID, symptom, cause, and solution.
+# =============================================================================
+gotchas:
+  - id: jwt_issuer_mismatch
+    discovered_in: V15, V16
+    severity: high
+    symptom: 401 Unauthorized on all API calls even when user is logged in
+    cause: |
+      Token issuer URL mismatch between frontend and backend:
+      - Frontend gets token from: http://localhost:8080
+      - Token issuer field contains: http://localhost:8080/realms/myrealm
+      - Backend validates token against: http://keycloak:8080/realms/myrealm
+      - Backend rejects token because issuers don't match!
+    solution: |
+      Add KC_HOSTNAME and KC_HOSTNAME_PORT to Keycloak container:
+      ```yaml
+      keycloak:
+        environment:
+          KC_HOSTNAME: localhost
+          KC_HOSTNAME_PORT: "8080"
+      ```
+
+  - id: audience_mismatch
+    discovered_in: V20
+    severity: high
+    symptom: 401 Unauthorized after successful login
+    cause: |
+      Frontend gets token with audience=["resumax-frontend"]
+      Backend validates expecting audience="resumax-backend"
+      Token doesn't contain backend client_id in audience claim
+    solution: |
+      Add audience mapper to frontend client (see behavior_contracts.multi_client_audience)
+      or use single client for both frontend and backend
+
+  - id: missing_redirect_uris
+    discovered_in: V20
+    severity: high
+    symptom: 400 Bad Request on login/registration
+    cause: Client doesn't have redirect URIs configured
+    solution: |
+      init-keycloak.sh must include:
+      - redirectUris: ["http://localhost:5173/*"]
+      - webOrigins: ["http://localhost:5173"]
+
+  - id: registration_disabled
+    discovered_in: V20
+    severity: medium
+    symptom: "Registration is disabled" error on sign up
+    cause: registrationAllowed not set in realm
+    solution: |
+      Include in realm creation:
+      {"registrationAllowed": true, "loginWithEmailAllowed": true}
+
+  - id: using_a_href_instead_of_link
+    discovered_in: V16, V20
+    severity: medium
+    symptom: Auth state lost after navigation, user appears logged out
+    cause: |
+      Using <a href="/dashboard"> instead of React Router <Link to="/dashboard">
+      causes full page reload which loses React state (including auth tokens)
+    solution: |
+      AI implementation rule: ALWAYS use <Link to> for internal navigation
+      Add AC: "Use React Router Link component for all internal navigation"
+
+  - id: backend_cannot_reach_localhost
+    discovered_in: V15
+    severity: high
+    symptom: Backend cannot fetch JWKS, all auth fails
+    cause: |
+      Inside Docker container, 'localhost' refers to the container itself.
+      Backend cannot reach Keycloak via localhost.
+    solution: |
+      Backend must use Docker network name:
+      KEYCLOAK_URL=http://keycloak:8080  # Not http://localhost:8080
+
+  - id: health_endpoint_disabled
+    discovered_in: V20
+    severity: medium
+    symptom: Keycloak shows "unhealthy", dependent services won't start
+    cause: KC_HEALTH_ENABLED not set to "true"
+    solution: |
+      In docker-compose.yml:
+      KC_HEALTH_ENABLED: "true"
+
+  - id: silent_sso_iframe_hang
+    discovered_in: V16
+    severity: medium
+    symptom: App shows loading forever, never authenticates
+    cause: |
+      - Third-party cookies blocked by browser
+      - silent-check-sso.html file missing
+      - File not in Valid Redirect URIs
+    solution: |
+      1. Create public/silent-check-sso.html with postMessage script
+      2. Add to client redirectUris in Keycloak
+      3. Configure silentCheckSsoRedirectUri in Keycloak init
+
+  - id: pkce_not_enabled
+    discovered_in: V17
+    severity: high
+    symptom: "PKCE validation failed" or login doesn't complete
+    cause: Client not configured for PKCE
+    solution: |
+      In client settings:
+      {"attributes": {"pkce.code.challenge.method": "S256"}}
+
+# =============================================================================
+# VALIDATION CHECKLIST
+# =============================================================================
+# Use this checklist to verify Keycloak integration is working correctly
+# =============================================================================
+validation_checklist:
+  - step: 1. Keycloak is healthy
+    command: curl -sf http://localhost:8080/health/ready
+    expected: '{"status":"UP"}'
+    
+  - step: 2. Realm exists
+    command: curl -sf http://localhost:8080/realms/{realm}
+    expected: Contains "realm":"{realm}"
+    
+  - step: 3. OIDC discovery works
+    command: curl -sf http://localhost:8080/realms/{realm}/.well-known/openid-configuration
+    expected: Contains "authorization_endpoint", "token_endpoint"
+    
+  - step: 4. JWKS endpoint accessible
+    command: curl -sf http://localhost:8080/realms/{realm}/protocol/openid-connect/certs
+    expected: Contains "keys" array with RSA public keys
+    
+  - step: 5. Frontend client configured
+    check: Login from frontend works
+    expected: User redirected to Keycloak, can enter credentials
+    
+  - step: 6. Redirect URIs correct
+    check: After login, user redirected back to app
+    expected: No "Invalid redirect uri" error
+    
+  - step: 7. Token validation works
+    check: Make authenticated API call
+    expected: API returns 200, not 401
+    
+  - step: 8. Token contains correct audience
+    check: jwt.io decode access_token
+    expected: "aud" claim contains both frontend and backend client IDs
+    
+  - step: 9. Registration works
+    check: Click Register, complete form
+    expected: User created, lands in app authenticated
+    
+  - step: 10. Logout clears session
+    check: Click Logout, then refresh
+    expected: User is not authenticated
+
+# =============================================================================
+# REFERENCES
+# =============================================================================
+references:
+  - name: Keycloak Documentation
+    url: https://www.keycloak.org/documentation
+    
+  - name: keycloak-js NPM Package
+    url: https://www.npmjs.com/package/keycloak-js
+    
+  - name: Genesis V20 Bugs Report
+    path: experiments/deep-cline-v2/V20_BUGS_REPORT.md
+    
+  - name: Genesis Deep-Cline Analysis
+    path: experiments/DEEP_CLINE_ANALYSIS.md
+
+# =============================================================================
+# MIGRATION FROM COMPONENT
+# =============================================================================
+migration_notes:
+  from: components/auth/keycloak/component.yaml
+  reason: |
+    Keycloak is a third-party service with specific protocols (OIDC, OAuth 2.0)
+    that require behavior contracts to ensure correct implementation.
+    The old component.yaml approach didn't capture:
+    - Complete auth flow behaviors
+    - Multi-client audience requirements (V20-7 root cause)
+    - Error handling for each step
+    
+    Moving to integrations/ with behavior_contracts ensures AI implementations
+    follow the complete protocol, not just the configuration patterns.
