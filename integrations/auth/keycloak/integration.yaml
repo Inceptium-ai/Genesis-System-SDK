@@ -770,6 +770,28 @@ init_script_template: |
     echo "✓ Audience mapper configured"
   fi
   
+  # Create test user for development
+  TEST_USER="${TEST_USER:-testuser}"
+  TEST_PASSWORD="${TEST_PASSWORD:-testpass}"
+  TEST_EMAIL="${TEST_EMAIL:-test@example.com}"
+  
+  echo "Creating test user: $TEST_USER"
+  curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM/users" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"username\": \"$TEST_USER\",
+      \"email\": \"$TEST_EMAIL\",
+      \"enabled\": true,
+      \"emailVerified\": true,
+      \"credentials\": [{
+        \"type\": \"password\",
+        \"value\": \"$TEST_PASSWORD\",
+        \"temporary\": false
+      }]
+    }" || echo "Test user may already exist"
+  echo "✓ Test user configured"
+  
   echo ""
   echo "=========================================="
   echo "✓ Keycloak initialization complete!"
@@ -777,6 +799,7 @@ init_script_template: |
   echo "Realm: $REALM"
   echo "Frontend Client: $FRONTEND_CLIENT"
   echo "Backend Client: $BACKEND_CLIENT"
+  echo "Test User: $TEST_USER / $TEST_PASSWORD"
   echo "Admin Console: $KEYCLOAK_URL/admin"
   echo ""
 
@@ -788,7 +811,7 @@ init_script_template: |
 # =============================================================================
 gotchas:
   - id: jwt_issuer_mismatch
-    discovered_in: V15, V16
+    discovered_in: V15, V16, V21
     severity: high
     symptom: 401 Unauthorized on all API calls even when user is logged in
     cause: |
@@ -805,6 +828,23 @@ gotchas:
           KC_HOSTNAME: localhost
           KC_HOSTNAME_PORT: "8080"
       ```
+    backend_fix_code: |
+      # In Docker dev, disable issuer/audience verification in backend/auth/keycloak.py:
+      # This is acceptable for local Docker development only!
+      
+      payload = jwt.decode(
+          token,
+          key,
+          algorithms=["RS256"],
+          options={
+              "verify_signature": True,  # Always verify signature
+              "verify_exp": True,        # Always check expiry
+              "verify_aud": False,       # Docker: frontend token has different audience
+              "verify_iss": False,       # Docker: localhost vs keycloak DNS name
+          }
+      )
+      
+      # NOTE: In production, set these to True and use consistent hostnames
 
   - id: audience_mismatch
     discovered_in: V20

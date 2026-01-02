@@ -1013,6 +1013,103 @@ multi_client_audience:
       tradeoff: Less separation of concerns, same token scopes
 
 # =============================================================================
+# SPA AUTH FLOW PATTERNS (V22 Bug Fix)
+# =============================================================================
+spa_auth_flows:
+  description: |
+    Standard authentication flow patterns for Single Page Applications.
+    These patterns ensure consistent UX across all Genesis-built apps.
+    
+    Discovered need: V22 ResuMax test (January 2026)
+    - LandingPage did not redirect authenticated users
+    - Users got stuck on landing page after login
+    
+  landing_page:
+    behavior: |
+      Public landing page MUST check authentication state on load:
+      1. If isLoading → show loading spinner
+      2. If isAuthenticated → redirect to post_login_redirect path
+      3. If not authenticated → show landing page content
+      
+    implementation: |
+      ```tsx
+      // LandingPage.tsx
+      import { Navigate } from 'react-router-dom';
+      import { useAuth } from '../hooks/useAuth';
+      
+      export default function LandingPage() {
+        const { login, isAuthenticated, isLoading } = useAuth();
+        
+        // Loading state
+        if (isLoading) {
+          return <LoadingSpinner />;
+        }
+        
+        // Redirect authenticated users to dashboard
+        if (isAuthenticated) {
+          return <Navigate to="/dashboard" replace />;
+        }
+        
+        // Show landing page for unauthenticated users
+        return <div>...</div>;
+      }
+      ```
+      
+  post_login_redirect:
+    default: /dashboard
+    description: |
+      Where to send users after successful authentication.
+      This is configurable per-project in .gss/project-spec.yaml:
+      ```yaml
+      auth:
+        post_login_redirect: /dashboard
+      ```
+      
+  logout_redirect:
+    default: /
+    description: "Where to send users after logout"
+    
+  protected_route:
+    description: "Component that guards routes requiring authentication"
+    implementation: |
+      ```tsx
+      // ProtectedRoute.tsx
+      import { Navigate, useLocation } from 'react-router-dom';
+      import { useAuth } from '../hooks/useAuth';
+      
+      export default function ProtectedRoute({ children }) {
+        const { isAuthenticated, isLoading } = useAuth();
+        const location = useLocation();
+        
+        if (isLoading) {
+          return <LoadingSpinner />;
+        }
+        
+        if (!isAuthenticated) {
+          // Save intended destination for post-login redirect
+          return <Navigate to="/" state={{ from: location }} replace />;
+        }
+        
+        return children;
+      }
+      ```
+      
+  acceptance_criteria_template: |
+    When implementing App Router task, include these AC:
+    ```yaml
+    acceptance_criteria:
+      - id: landing_auth_redirect
+        type: behavior_verify
+        description: "LandingPage redirects authenticated users to dashboard"
+      - id: protected_route_guard
+        type: behavior_verify  
+        description: "Protected routes redirect unauthenticated users to landing"
+      - id: logout_redirect
+        type: behavior_verify
+        description: "Logout redirects users to landing page"
+    ```
+
+# =============================================================================
 # SECURITY CHECKLIST
 # =============================================================================
 security:
