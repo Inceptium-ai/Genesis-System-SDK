@@ -1,0 +1,572 @@
+# =============================================================================
+# Auth Component (Provider-Agnostic)
+# =============================================================================
+# Generic authentication patterns for OIDC/OAuth 2.0 providers
+# This component defines patterns that work with ANY OIDC provider
+# (Keycloak, Auth0, Okta, Cognito, etc.)
+#
+# Provider-specific implementations are in: integrations/auth/{provider}/
+# =============================================================================
+
+name: auth
+version: 1.0.0
+category: authentication
+type: component
+
+description: |
+  Provider-agnostic authentication component for OIDC/OAuth 2.0.
+  Defines generic patterns, hooks, and utilities that work with any identity provider.
+  
+  For provider-specific configuration, see integrations/auth/{provider}/
+  Supported providers: keycloak, auth0, okta, cognito
+
+# =============================================================================
+# STANDARD USER INFO SCHEMA
+# =============================================================================
+# All auth implementations MUST use these standardized field names
+# This prevents bugs like "keycloak_id vs sub" mismatches
+# =============================================================================
+
+user_info_schema:
+  description: |
+    Standard schema for user information returned by auth hooks.
+    All routes and services MUST use these key names to ensure consistency
+    across generated code regardless of identity provider.
+    
+  fields:
+    user_id:
+      description: Unique user identifier from identity provider
+      jwt_claims: ["sub"]  # Standard OIDC claim
+      type: string
+      required: true
+      usage: "user.user_id"
+      
+    email:
+      description: User's email address
+      jwt_claims: ["email"]
+      type: string
+      required: true
+      usage: "user.email"
+      
+    username:
+      description: Username for display
+      jwt_claims: ["preferred_username", "nickname"]
+      fallback: "email prefix before @"
+      type: string
+      required: true
+      usage: "user.username"
+      
+    first_name:
+      description: User's first name
+      jwt_claims: ["given_name"]
+      type: string
+      required: false
+      
+    last_name:
+      description: User's last name
+      jwt_claims: ["family_name"]
+      type: string
+      required: false
+      
+    name:
+      description: User's full name
+      jwt_claims: ["name"]
+      type: string
+      required: false
+      
+    email_verified:
+      description: Whether email has been verified
+      jwt_claims: ["email_verified"]
+      type: boolean
+      default: false
+      
+    roles:
+      description: User roles from provider
+      provider_specific: true  # Location varies by provider
+      type: "list[string]"
+      default: []
+      
+    avatar_url:
+      description: User's profile picture URL
+      jwt_claims: ["picture"]
+      type: string
+      required: false
+
+# =============================================================================
+# FRONTEND PATTERNS (React)
+# =============================================================================
+
+frontend_patterns:
+  
+  # ---------------------------------------------------------------------------
+  # Auth Hook Interface
+  # ---------------------------------------------------------------------------
+  use_auth_hook:
+    description: Standard interface for useAuth hook
+    file: src/hooks/useAuth.ts
+    interface: |
+      interface AuthContextType {
+        // State
+        isAuthenticated: boolean;
+        isLoading: boolean;
+        user: User | null;
+        token: string | null;
+        
+        // Actions
+        login: (options?: LoginOptions) => Promise<void>;
+        logout: (options?: LogoutOptions) => Promise<void>;
+        register: (options?: RegisterOptions) => Promise<void>;
+        
+        // Optional
+        refreshToken?: () => Promise<void>;
+        hasRole?: (role: string) => boolean;
+      }
+      
+      interface User {
+        user_id: string;
+        email: string;
+        username: string;
+        first_name?: string;
+        last_name?: string;
+        name?: string;
+        email_verified: boolean;
+        roles: string[];
+        avatar_url?: string;
+      }
+      
+      interface LoginOptions {
+        redirectUri?: string;
+      }
+      
+      interface LogoutOptions {
+        redirectUri?: string;
+      }
+      
+    usage: |
+      import { useAuth } from '@/hooks/useAuth';
+      
+      function MyComponent() {
+        const { isAuthenticated, user, login, logout } = useAuth();
+        
+        if (!isAuthenticated) {
+          return <button onClick={() => login()}>Sign In</button>;
+        }
+        
+        return (
+          <div>
+            Welcome, {user?.username}!
+            <button onClick={() => logout()}>Sign Out</button>
+          </div>
+        );
+      }
+
+  # ---------------------------------------------------------------------------
+  # Auth Provider Component
+  # ---------------------------------------------------------------------------
+  auth_provider:
+    description: Context provider that wraps app with auth state
+    file: src/providers/AuthProvider.tsx
+    structure: |
+      1. Create provider client (Keycloak, Auth0, etc.)
+      2. Initialize auth on mount
+      3. Handle token refresh
+      4. Provide context to children
+    template: |
+      'use client';
+      
+      import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+      
+      interface AuthContextType {
+        isAuthenticated: boolean;
+        isLoading: boolean;
+        user: User | null;
+        token: string | null;
+        login: () => Promise<void>;
+        logout: () => Promise<void>;
+        register: () => Promise<void>;
+      }
+      
+      const AuthContext = createContext<AuthContextType | null>(null);
+      
+      export function AuthProvider({ children }: { children: ReactNode }) {
+        const [isAuthenticated, setIsAuthenticated] = useState(false);
+        const [isLoading, setIsLoading] = useState(true);
+        const [user, setUser] = useState<User | null>(null);
+        const [token, setToken] = useState<string | null>(null);
+        
+        // Provider-specific initialization goes here
+        // See integrations/auth/{provider}/integration.yaml
+        
+        return (
+          <AuthContext.Provider value={{
+            isAuthenticated,
+            isLoading,
+            user,
+            token,
+            login,
+            logout,
+            register,
+          }}>
+            {children}
+          </AuthContext.Provider>
+        );
+      }
+      
+      export function useAuth() {
+        const context = useContext(AuthContext);
+        if (!context) {
+          throw new Error('useAuth must be used within AuthProvider');
+        }
+        return context;
+      }
+
+  # ---------------------------------------------------------------------------
+  # Protected Route Component
+  # ---------------------------------------------------------------------------
+  protected_route:
+    description: Guards routes that require authentication
+    file: src/components/auth/ProtectedRoute.tsx
+    template: |
+      import { Navigate, useLocation } from 'react-router-dom';
+      import { useAuth } from '@/hooks/useAuth';
+      
+      interface ProtectedRouteProps {
+        children: React.ReactNode;
+        requiredRole?: string;
+      }
+      
+      export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
+        const { isAuthenticated, isLoading, hasRole } = useAuth();
+        const location = useLocation();
+        
+        if (isLoading) {
+          return <LoadingSpinner />;
+        }
+        
+        if (!isAuthenticated) {
+          return <Navigate to="/" state={{ from: location }} replace />;
+        }
+        
+        if (requiredRole && hasRole && !hasRole(requiredRole)) {
+          return <Navigate to="/unauthorized" replace />;
+        }
+        
+        return <>{children}</>;
+      }
+
+  # ---------------------------------------------------------------------------
+  # API Client with Auth
+  # ---------------------------------------------------------------------------
+  api_client:
+    description: Centralized API client that attaches auth tokens
+    file: src/lib/api.ts
+    purpose: |
+      Prevents bugs like:
+      - Double /api/ prefix
+      - Inconsistent URL patterns
+      - Missing auth headers
+    template: |
+      import { useAuth } from '@/hooks/useAuth';
+      
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+      
+      interface ApiOptions extends RequestInit {
+        skipAuth?: boolean;
+      }
+      
+      class ApiClient {
+        private getToken: () => string | null = () => null;
+        
+        setTokenGetter(getter: () => string | null) {
+          this.getToken = getter;
+        }
+        
+        async request<T>(path: string, options: ApiOptions = {}): Promise<T> {
+          const { skipAuth, ...fetchOptions } = options;
+          
+          const headers: HeadersInit = {
+            'Content-Type': 'application/json',
+            ...fetchOptions.headers,
+          };
+          
+          if (!skipAuth) {
+            const token = this.getToken();
+            if (token) {
+              headers['Authorization'] = `Bearer ${token}`;
+            }
+          }
+          
+          const response = await fetch(`${API_BASE}${path}`, {
+            ...fetchOptions,
+            headers,
+          });
+          
+          if (!response.ok) {
+            if (response.status === 401) {
+              // Token expired - trigger refresh or login
+              window.dispatchEvent(new CustomEvent('auth:expired'));
+            }
+            throw new ApiError(response.status, await response.text());
+          }
+          
+          return response.json();
+        }
+        
+        get<T>(path: string, options?: ApiOptions) {
+          return this.request<T>(path, { ...options, method: 'GET' });
+        }
+        
+        post<T>(path: string, body: unknown, options?: ApiOptions) {
+          return this.request<T>(path, { 
+            ...options, 
+            method: 'POST', 
+            body: JSON.stringify(body) 
+          });
+        }
+        
+        put<T>(path: string, body: unknown, options?: ApiOptions) {
+          return this.request<T>(path, { 
+            ...options, 
+            method: 'PUT', 
+            body: JSON.stringify(body) 
+          });
+        }
+        
+        delete<T>(path: string, options?: ApiOptions) {
+          return this.request<T>(path, { ...options, method: 'DELETE' });
+        }
+      }
+      
+      export const api = new ApiClient();
+      
+      // Hook for components
+      export function useApi() {
+        const { token } = useAuth();
+        
+        useEffect(() => {
+          api.setTokenGetter(() => token);
+        }, [token]);
+        
+        return api;
+      }
+
+# =============================================================================
+# BACKEND PATTERNS (FastAPI)
+# =============================================================================
+
+backend_patterns:
+  
+  # ---------------------------------------------------------------------------
+  # Auth Dependency
+  # ---------------------------------------------------------------------------
+  auth_dependency:
+    description: FastAPI dependency for getting current user
+    file: backend/auth/dependencies.py
+    template: |
+      from fastapi import Depends, HTTPException, status
+      from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+      from typing import Dict, List
+      import jwt
+      
+      security = HTTPBearer()
+      
+      async def get_current_user(
+          credentials: HTTPAuthorizationCredentials = Depends(security)
+      ) -> Dict:
+          """
+          Dependency to get and validate the current authenticated user.
+          Returns standardized user info dict.
+          """
+          token = credentials.credentials
+          
+          try:
+              # Provider-specific validation goes here
+              # See integrations/auth/{provider}/
+              
+              claims = validate_token(token)
+              
+              # Return standardized user info
+              return {
+                  "user_id": claims.get("sub"),
+                  "email": claims.get("email"),
+                  "username": claims.get("preferred_username") or claims.get("email", "").split("@")[0],
+                  "first_name": claims.get("given_name"),
+                  "last_name": claims.get("family_name"),
+                  "name": claims.get("name"),
+                  "email_verified": claims.get("email_verified", False),
+                  "roles": extract_roles(claims),  # Provider-specific
+              }
+              
+          except jwt.ExpiredSignatureError:
+              raise HTTPException(status_code=401, detail="Token expired")
+          except jwt.InvalidTokenError as e:
+              raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+      
+      def require_role(role: str):
+          """Dependency factory to require specific role."""
+          async def check_role(user: Dict = Depends(get_current_user)):
+              if role not in user.get("roles", []):
+                  raise HTTPException(
+                      status_code=403, 
+                      detail=f"Role '{role}' required"
+                  )
+              return user
+          return Depends(check_role)
+    
+    usage: |
+      from auth.dependencies import get_current_user, require_role
+      
+      @router.get("/profile")
+      async def get_profile(user: Dict = Depends(get_current_user)):
+          return {"user_id": user["user_id"], "email": user["email"]}
+      
+      @router.get("/admin/users")
+      async def list_users(admin: Dict = require_role("admin")):
+          return {"users": [...]}
+
+# =============================================================================
+# REQUIRED FILES
+# =============================================================================
+# Files that MUST be created for auth to work properly
+# =============================================================================
+
+required_files:
+  frontend:
+    - path: public/silent-check-sso.html
+      description: Required for OIDC silent SSO check
+      mandatory: true
+      content: |
+        <!doctype html>
+        <html>
+        <head><title>Silent Check SSO</title></head>
+        <body>
+          <script>parent.postMessage(location.href, location.origin);</script>
+        </body>
+        </html>
+      validation: "file_exists and contains 'postMessage'"
+      
+    - path: src/hooks/useAuth.ts
+      description: Auth hook implementation
+      mandatory: true
+      validation: "file_exists and exports useAuth"
+      
+    - path: src/providers/AuthProvider.tsx
+      description: Auth context provider
+      mandatory: true
+      validation: "file_exists and exports AuthProvider"
+      
+    - path: src/lib/api.ts
+      description: Centralized API client
+      mandatory: true
+      validation: "file_exists and exports api"
+
+# =============================================================================
+# AUTH FLOW BEHAVIORS
+# =============================================================================
+
+auth_flows:
+  landing_page:
+    behavior: |
+      Public landing page MUST check auth state on load:
+      1. If isLoading → show loading spinner
+      2. If isAuthenticated → redirect to post_login_redirect
+      3. If not authenticated → show landing content
+    acceptance_criteria:
+      - "LandingPage redirects authenticated users to dashboard"
+      
+  protected_routes:
+    behavior: |
+      Protected routes MUST check auth before rendering:
+      1. If isLoading → show loading spinner
+      2. If not authenticated → redirect to landing with return path
+      3. If authenticated → render content
+    acceptance_criteria:
+      - "Protected routes redirect unauthenticated users to landing"
+      
+  logout:
+    behavior: |
+      Logout MUST clear all session state:
+      1. Call provider logout endpoint
+      2. Clear local token storage
+      3. Redirect to logout_redirect (default: /)
+    acceptance_criteria:
+      - "Logout clears session and redirects to landing"
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+config:
+  post_login_redirect:
+    description: Where to redirect after successful login
+    default: "/dashboard"
+    config_path: ".gss/project-spec.yaml → auth.post_login_redirect"
+    
+  logout_redirect:
+    description: Where to redirect after logout
+    default: "/"
+    config_path: ".gss/project-spec.yaml → auth.logout_redirect"
+    
+  provider:
+    description: Which auth provider to use
+    options: ["keycloak", "auth0", "okta", "cognito", "custom"]
+    config_path: ".gss/project-spec.yaml → auth.provider"
+
+# =============================================================================
+# IMPLEMENTATION NOTES
+# =============================================================================
+
+implementation:
+  for_ai_agents: |
+    When implementing auth:
+    
+    1. Check project-spec.yaml for auth provider:
+       ```yaml
+       auth:
+         provider: keycloak  # or auth0, okta, etc.
+       ```
+    
+    2. Use THIS generic component for:
+       - useAuth hook interface
+       - ProtectedRoute component
+       - API client pattern
+       - Standard user info schema
+    
+    3. Use integrations/auth/{provider}/ for:
+       - Provider-specific initialization
+       - Token validation
+       - Environment variables
+       - Docker configuration
+    
+    4. ALWAYS create required files:
+       - public/silent-check-sso.html
+       - src/hooks/useAuth.ts
+       - src/providers/AuthProvider.tsx
+       - src/lib/api.ts
+    
+    5. NEVER use raw <a href> for internal navigation (loses auth state)
+       Use <Link to> from react-router-dom
+
+# =============================================================================
+# PROVIDER REFERENCES
+# =============================================================================
+
+providers:
+  keycloak:
+    integration_path: integrations/auth/keycloak/integration.yaml
+    description: Enterprise OIDC with Keycloak
+    
+  auth0:
+    integration_path: integrations/auth/auth0/integration.yaml
+    description: Auth0 identity platform
+    status: planned
+    
+  okta:
+    integration_path: integrations/auth/okta/integration.yaml
+    description: Okta identity management
+    status: planned
+    
+  cognito:
+    integration_path: integrations/auth/cognito/integration.yaml
+    description: AWS Cognito user pools
+    status: planned

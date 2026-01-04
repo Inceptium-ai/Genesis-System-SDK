@@ -484,6 +484,8 @@ behavior_contracts:
     
     required_file:
       path: public/silent-check-sso.html
+      mandatory: true
+      discovered_in: V23 Manual Testing (January 2026)
       content: |
         <!doctype html>
         <html>
@@ -492,6 +494,14 @@ behavior_contracts:
           <script>parent.postMessage(location.href, location.origin);</script>
         </body>
         </html>
+      validation:
+        type: file_exists
+        check: "public/silent-check-sso.html exists and contains 'postMessage'"
+      ac_for_task_t1: |
+        - id: silent_sso_file
+          type: file_exists
+          path: frontend/public/silent-check-sso.html
+          description: "Silent SSO file required for Keycloak check-sso"
     
     validation:
       - check: Previously logged-in user is still authenticated
@@ -804,7 +814,72 @@ init_script_template: |
   echo ""
 
 # =============================================================================
-# GOTCHAS - LESSONS LEARNED FROM V15-V20 TESTING
+# JWT LIBRARY SELECTION (CRITICAL - V26 Bug Fix)
+# =============================================================================
+# Two popular Python JWT libraries exist with DIFFERENT JWK handling.
+# Using the wrong approach causes "Expecting a PEM-formatted key" error.
+# Discovered in V26 testing (January 2026)
+# =============================================================================
+
+jwt_libraries:
+  recommendation: python-jose
+  reason: |
+    python-jose has native JWK/JWKS support for OIDC workflows.
+    Simpler API - can pass JWK dict directly to jwt.decode().
+    Better suited for Keycloak integration.
+
+  options:
+    - name: python-jose
+      package: python-jose[cryptography]
+      pip_install: "pip install python-jose[cryptography]"
+      documentation: https://python-jose.readthedocs.io/
+      jwk_handling: native
+      code_pattern: |
+        from jose import jwt, JWTError
+        
+        # Fetch JWKS and find matching key (returns dict)
+        key = find_key_by_kid(jwks, kid)  # key is a JWK dict
+        
+        # python-jose accepts JWK dict directly - NO CONVERSION NEEDED
+        payload = jwt.decode(
+            token,
+            key,  # Pass JWK dict directly ✓
+            algorithms=["RS256"],
+            options={
+                "verify_aud": False,  # Docker: audience mismatch
+                "verify_iss": False,  # Docker: issuer mismatch
+            }
+        )
+      
+    - name: PyJWT
+      package: PyJWT[cryptography]
+      pip_install: "pip install PyJWT[cryptography]"
+      documentation: https://pyjwt.readthedocs.io/
+      jwk_handling: requires_conversion
+      note: More popular library, but REQUIRES explicit JWK-to-RSA conversion
+      code_pattern: |
+        import jwt
+        from jwt.algorithms import RSAAlgorithm
+        import json
+        
+        # Fetch JWKS and find matching key (returns dict)
+        key = find_key_by_kid(jwks, kid)  # key is a JWK dict
+        
+        # CRITICAL: PyJWT requires JWK conversion to RSA key
+        public_key = RSAAlgorithm.from_jwk(json.dumps(key))
+        
+        payload = jwt.decode(
+            token,
+            public_key,  # Pass converted RSA key, NOT dict
+            algorithms=["RS256"],
+            options={
+                "verify_iss": False,  # Docker: issuer mismatch
+                "verify_aud": False,  # Docker: audience mismatch
+            }
+        )
+
+# =============================================================================
+# GOTCHAS - LESSONS LEARNED FROM V15-V26 TESTING
 # =============================================================================
 # These issues caused auth failures in Genesis experiments.
 # Each gotcha includes the bug ID, symptom, cause, and solution.
@@ -929,6 +1004,51 @@ gotchas:
     solution: |
       In client settings:
       {"attributes": {"pkce.code.challenge.method": "S256"}}
+
+  - id: jwt_library_jwk_handling
+    discovered_in: V26
+    severity: critical
+    symptom: |
+      TypeError: Expecting a PEM-formatted key.
+      401 Unauthorized on all authenticated API requests.
+    cause: |
+      Two Python JWT libraries exist with DIFFERENT JWK handling:
+      
+      1. python-jose (from jose import jwt):
+         - Accepts JWK dict directly in jwt.decode()
+         - Native OIDC/JWKS support
+         - Used in V24 (worked correctly)
+      
+      2. PyJWT (import jwt):
+         - DOES NOT accept JWK dict directly
+         - Requires explicit conversion: RSAAlgorithm.from_jwk()
+         - Used in V26 (broke without conversion)
+      
+      The AI chose a different library between V24 and V26, and PyJWT requires
+      explicit key conversion that wasn't implemented.
+    solution: |
+      Option 1: Use python-jose (RECOMMENDED)
+      ```python
+      from jose import jwt
+      payload = jwt.decode(token, key, algorithms=["RS256"], ...)  # key is JWK dict ✓
+      ```
+      
+      Option 2: If using PyJWT, convert JWK first
+      ```python
+      import jwt
+      from jwt.algorithms import RSAAlgorithm
+      import json
+      
+      public_key = RSAAlgorithm.from_jwk(json.dumps(key))
+      payload = jwt.decode(token, public_key, algorithms=["RS256"], ...)
+      ```
+    prevention: |
+      When implementing Keycloak JWT validation in Python:
+      1. Check which library is being used (jose vs jwt)
+      2. If using PyJWT, MUST convert JWK to RSA key
+      3. Prefer python-jose for OIDC/Keycloak integrations
+    not_docker_specific: true
+    affects_all_environments: true
 
 # =============================================================================
 # VALIDATION CHECKLIST
