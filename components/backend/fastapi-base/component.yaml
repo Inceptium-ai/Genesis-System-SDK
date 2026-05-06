@@ -6,9 +6,9 @@
 # =============================================================================
 
 name: fastapi-base
-version: 1.0.0
+version: 1.1.0
 category: backend
-validated: 2024-12-28
+validated: 2026-04-21
 
 description: |
   Pure FastAPI backend scaffold - no LLM or AI dependencies.
@@ -104,32 +104,45 @@ docker:
     # Copy application
     COPY . .
     
-    EXPOSE 8000
-    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-  
+    # BACKEND_INTERNAL_PORT is the port uvicorn listens on inside the
+    # container. Defaults to 8000. The deployment manager picks the host-side
+    # port separately via BACKEND_HOST_PORT (see docker_compose_snippet below).
+    ARG BACKEND_INTERNAL_PORT=8000
+    ENV BACKEND_INTERNAL_PORT=${BACKEND_INTERNAL_PORT}
+    EXPOSE ${BACKEND_INTERNAL_PORT}
+    CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_INTERNAL_PORT}"]
+
   health_check:
-    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    # Container-side healthcheck uses BACKEND_INTERNAL_PORT (default 8000).
+    test: ["CMD-SHELL", "curl -f http://localhost:${BACKEND_INTERNAL_PORT:-8000}/health"]
     interval: 30s
     timeout: 10s
     retries: 3
     start_period: 10s
 
   docker_compose_snippet: |
+    # Host-side port (BACKEND_HOST_PORT) is owned by the deployment manager,
+    # not the LLM. The default 8000 is overridden via .env.deploy at deploy
+    # time so generated apps don't collide with the Genesis platform itself
+    # (which also uses 8000).
     backend:
       build:
         context: ./backend
         dockerfile: Dockerfile
+        args:
+          BACKEND_INTERNAL_PORT: ${BACKEND_INTERNAL_PORT:-8000}
       ports:
-        - "8000:8000"
+        - "${BACKEND_HOST_PORT:-8000}:${BACKEND_INTERNAL_PORT:-8000}"
       environment:
-        DATABASE_URL: postgresql+asyncpg://user:pass@postgres:5432/dbname
-        ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:3000"
+        DATABASE_URL: postgresql+asyncpg://user:pass@postgres:${POSTGRES_INTERNAL_PORT:-5432}/dbname
+        ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}"
+        BACKEND_INTERNAL_PORT: ${BACKEND_INTERNAL_PORT:-8000}
         DEBUG: "true"
       depends_on:
         postgres:
           condition: service_healthy
       healthcheck:
-        test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+        test: ["CMD-SHELL", "curl -f http://localhost:${BACKEND_INTERNAL_PORT:-8000}/health"]
         interval: 30s
         timeout: 10s
         retries: 3
@@ -394,27 +407,101 @@ patterns:
 
   schema_example: |
     """Example Pydantic schemas."""
-    
+
     from datetime import datetime
     from pydantic import BaseModel
-    
-    
+
+
     class ItemBase(BaseModel):
         name: str
         description: str | None = None
-    
-    
+
+
     class ItemCreate(ItemBase):
         pass
-    
-    
+
+
     class ItemRead(ItemBase):
         id: int
         created_at: datetime
         updated_at: datetime
-        
+
         class Config:
             from_attributes = True
+
+  sse_streaming_route: |
+    """SSE (Server-Sent Events) streaming endpoint.
+
+    IMPORTANT: Any blocking/synchronous work triggered by the request
+    (LLM calls, heavy CPU, sync file I/O) MUST run on a worker thread
+    via `asyncio.to_thread(...)`. If it runs directly in the handler
+    or in a plain `asyncio.create_task(...)` that then calls sync code,
+    it blocks the single event loop — the SSE generator can't yield,
+    the browser receives no events, and the UI hangs silently.
+
+    The correct shape is:
+      1. Handler sets up an `asyncio.Queue` for log/event messages.
+      2. Handler kicks off background work via `asyncio.create_task`,
+         which inside uses `await asyncio.to_thread(sync_func, ...)`.
+      3. Generator drains the queue with `await asyncio.wait_for(q.get(), timeout)`
+         and yields SSE-formatted bytes.
+      4. Always return `StreamingResponse(..., media_type="text/event-stream",
+         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})`
+         so proxies don't buffer the stream.
+    """
+    import asyncio
+    import json
+    from datetime import datetime
+    from fastapi import APIRouter
+    from fastapi.responses import StreamingResponse
+
+    router = APIRouter()
+
+
+    def heavy_sync_work(payload: dict) -> dict:
+        """Example blocking call (LLM client, CPU work, sync HTTP, etc.)."""
+        # ...imagine a requests.post(...) or openai.ChatCompletion.create(...)
+        return {"ok": True, "payload": payload}
+
+
+    @router.get("/stream/{task_id}")
+    async def stream(task_id: str):
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def worker():
+            try:
+                await queue.put({"event": "started", "task_id": task_id})
+                result = await asyncio.to_thread(heavy_sync_work, {"id": task_id})
+                await queue.put({"event": "result", "data": result})
+            except Exception as exc:
+                await queue.put({"event": "error", "error": str(exc)})
+            finally:
+                await queue.put({"event": "__done__"})
+
+        asyncio.create_task(worker())
+
+        async def generate():
+            # Send an initial event immediately so the client knows the stream is live.
+            yield f"event: open\ndata: {json.dumps({'task_id': task_id})}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    yield f"event: keepalive\ndata: {json.dumps({'ts': datetime.utcnow().isoformat()})}\n\n"
+                    continue
+                if msg.get("event") == "__done__":
+                    break
+                yield f"event: {msg['event']}\ndata: {json.dumps(msg)}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
 # =============================================================================
 # CORS CONFIGURATION
@@ -447,6 +534,46 @@ gotchas:
       - create_async_engine instead of create_engine
       - AsyncSession instead of Session
       - await db.execute() instead of db.query()
+
+  blocking_sync_calls_in_sse_or_async:
+    problem: |
+      SSE endpoint (or any async handler) appears to hang: the browser opens
+      the connection but receives no events for long stretches, or "Connecting…"
+      never resolves.
+    cause: |
+      A synchronous call (blocking LLM client, `requests.post`, CPU-heavy work,
+      `time.sleep`, sync file I/O in hot paths) is being executed directly
+      inside an `async def` handler or background `asyncio.create_task`. FastAPI
+      runs everything on a single event loop — any sync call blocks every
+      other coroutine, including the async generator that's supposed to be
+      yielding SSE frames.
+    solution: |
+      Offload blocking work to a worker thread:
+        result = await asyncio.to_thread(sync_fn, arg1, arg2)
+      Or use `loop.run_in_executor(...)` if you need a custom executor.
+
+      Rule of thumb: if a function doesn't have `async def` and can take
+      more than a few ms, it belongs behind `asyncio.to_thread`. This is
+      especially critical for SSE endpoints — see `patterns.sse_streaming_route`.
+
+      Symptoms to watch for:
+      - SSE `keepalive` events stop firing after the first message
+      - "Connecting…" UI state persists with no server-side error
+      - `uvicorn` access log shows no completed request (SSE doesn't log
+        until the connection closes) — easy to mistake for "request never
+        arrived"
+
+  sse_no_initial_event:
+    problem: "SSE client hangs on 'Connecting…' for the full connection lifetime"
+    cause: |
+      Generator does expensive setup before its first `yield`, so the
+      browser's `EventSource` never sees the initial bytes that confirm
+      the stream is open and connected.
+    solution: |
+      Yield a trivial opening event (`event: open` or a status event) as
+      the very first line of the generator, before any DB/LLM work. This
+      also flips any "connecting" UI state in the client immediately and
+      makes hangs in the real work visible instead of silent.
 
   cors_credentials_with_wildcard:
     problem: "CORS error when frontend sends credentials"
@@ -501,8 +628,19 @@ usage:
 
 ---
 # Metadata
-last_updated: "2025-12-28"
+last_updated: "2026-04-21"
 llm_dependencies: none
+changelog:
+  - version: 1.1.0
+    date: "2026-04-21"
+    changes:
+      - "Added patterns.sse_streaming_route — canonical SSE endpoint with worker-thread offload"
+      - "Added gotchas.blocking_sync_calls_in_sse_or_async — the sync-inside-async trap that silently hangs SSE streams"
+      - "Added gotchas.sse_no_initial_event — yield an opening event first so 'Connecting…' UI resolves immediately"
+  - version: 1.0.0
+    date: "2024-12-28"
+    changes:
+      - "Initial release"
 composable_with:
   - llm/api-direct/structured-output  # For AI features
   - auth/keycloak                      # For authentication
