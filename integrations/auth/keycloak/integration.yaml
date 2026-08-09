@@ -447,7 +447,121 @@ behavior_contracts:
         method: Check keycloak.token is undefined after logout
 
   # ---------------------------------------------------------------------------
-  # Contract 7: Silent SSO Check
+  # Contract 7: Custom Theme Integration
+  # ---------------------------------------------------------------------------
+  - name: custom_theme_integration
+    description: Deploy custom Keycloak theme matching app design for seamless UX
+    trigger: User should not see default Keycloak login page (different branding)
+    
+    context: |
+      By default, Keycloak redirects users to its own login page with Keycloak branding.
+      This creates a jarring UX where users see two different designs:
+      1. App's sign-in form
+      2. Keycloak's default login page
+      
+      Solution: Create a custom Keycloak theme that matches the app's design.
+      The theme is deployed via Docker volume mount and configured in the realm.
+    
+    preconditions:
+      - Theme files exist in config/keycloak/themes/{app-name}/
+      - docker-compose mounts theme directory
+      - Realm is configured to use custom theme
+    
+    steps:
+      - step: 1
+        actor: scaffold
+        action: Generate theme files matching app design
+        files:
+          - config/keycloak/themes/{app-name}/login/theme.properties
+          - config/keycloak/themes/{app-name}/login/resources/css/login.css
+          - config/keycloak/themes/{app-name}/login/login.ftl
+          - config/keycloak/themes/{app-name}/login/register.ftl
+          - config/keycloak/themes/{app-name}/login/template.ftl
+      
+      - step: 2
+        actor: scaffold
+        action: Configure docker-compose volume mount
+        config: |
+          keycloak:
+            volumes:
+              - ./config/keycloak/themes:/opt/keycloak/themes:ro
+      
+      - step: 3
+        actor: init_script
+        action: Configure realm to use custom theme
+        api_call: |
+          curl -X PUT "$KEYCLOAK_URL/admin/realms/$REALM" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"loginTheme": "${APP_NAME}"}'
+      
+      - step: 4
+        actor: user
+        action: User clicks login in app
+        system: Redirects to Keycloak with custom theme
+        result: Login page matches app design
+    
+    required_files:
+      - path: config/keycloak/themes/{app-name}/login/theme.properties
+        mandatory: true
+        content: |
+          parent=keycloak
+          import=common/keycloak
+          styles=css/login.css
+      
+      - path: config/keycloak/themes/{app-name}/login/resources/css/login.css
+        mandatory: true
+        description: "CSS matching app's design system (colors, fonts, spacing)"
+      
+      - path: config/keycloak/themes/{app-name}/login/login.ftl
+        mandatory: true
+        description: "Login page template with app branding"
+      
+      - path: config/keycloak/themes/{app-name}/login/register.ftl
+        mandatory: true
+        description: "Registration page template with app branding"
+      
+      - path: config/keycloak/themes/{app-name}/login/template.ftl
+        mandatory: true
+        description: "Base template with app layout"
+    
+    docker_compose_snippet: |
+      keycloak:
+        image: quay.io/keycloak/keycloak:24.0
+        volumes:
+          - ./config/keycloak/themes:/opt/keycloak/themes:ro
+          - ./config/keycloak/${APP_NAME}-realm.json:/opt/keycloak/data/import/${APP_NAME}-realm.json:ro
+    
+    init_script_addition: |
+      # Configure custom theme for realm
+      echo "Configuring custom login theme..."
+      curl -s -X PUT "$KEYCLOAK_URL/admin/realms/$REALM" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"loginTheme\": \"$APP_NAME\"}"
+      echo "✓ Custom theme configured"
+    
+    validation:
+      - check: Theme files exist
+        method: ls config/keycloak/themes/{app-name}/login/
+        
+      - check: Theme is applied
+        method: Visit login page, verify app branding visible
+        
+      - check: No Keycloak default branding
+        method: Login page should not show Keycloak logo
+
+    error_handling:
+      - trigger: Theme not found
+        keycloak_error: "Theme not found: {app-name}"
+        solution: Verify theme directory is mounted and theme.properties exists
+        
+      - trigger: CSS not loading
+        symptom: Login page shows unstyled HTML
+        solution: Check resources/css path and file permissions
+
+  # ---------------------------------------------------------------------------
+  # Contract 8: Silent SSO Check
   # ---------------------------------------------------------------------------
   - name: silent_sso_check
     description: Check if user is logged in without showing login page

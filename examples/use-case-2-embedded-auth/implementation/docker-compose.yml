@@ -9,6 +9,14 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: auth-postgres
+    # Hardening: no setuid/setgid escalation, read-only root fs (data lives on
+    # the named volume; tmpfs covers postgres' runtime scratch paths).
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -26,9 +34,17 @@ services:
   # ============================================
   # SUPERTOKENS CORE
   # ============================================
+  # Writable root fs is required here: the image's entrypoint renders the env
+  # vars below into /lib/supertokens/config.yaml at startup, and with
+  # read_only:true the API server never binds :3567 (verified empirically).
+  # All persistent state still lives in postgres; escalation is blocked via
+  # no-new-privileges.
+  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   supertokens-core:
     image: supertokens/supertokens-postgresql:9.0
     container_name: auth-supertokens
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "3567:3567"
     environment:

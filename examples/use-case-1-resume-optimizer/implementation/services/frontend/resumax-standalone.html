@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Resumax - AI Resume Optimizer</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Pinned Tailwind Play CDN build + subresource integrity so a compromised
+       CDN cannot inject arbitrary script into this page. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"
+          integrity="sha384-mS5Uq7sE90lgbBDN8xgf34ibEgbZo4gB3tfLY40ZRle+M188BQw8onzNHg6GUZaA"
+          crossorigin="anonymous"></script>
   <style>
     @keyframes spin { to { transform: rotate(360deg); } }
     .animate-spin { animation: spin 1s linear infinite; }

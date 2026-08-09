@@ -11,9 +11,9 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.0",
-    "supertokens-auth-react": "^0.39.0",
-    "supertokens-web-js": "^0.10.0",
+    "react-router-dom": "^7.18.2",
+    "supertokens-auth-react": "^0.51.3",
+    "supertokens-web-js": "^0.16.0",
     "lucide-react": "^0.303.0"
   },
   "devDependencies": {

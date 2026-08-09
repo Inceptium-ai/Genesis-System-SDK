@@ -30,11 +30,22 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS - Allow all origins in development (file://, localhost:*, etc.)
+# CORS - explicit origin allowlist, overridable per environment via
+# CORS_ORIGINS (comma-separated). Defaults cover the dockerized frontend
+# (:3000), the Vite dev server (:5173), and the standalone file:// demo page
+# (which sends `Origin: null`).
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,null"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
-    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
