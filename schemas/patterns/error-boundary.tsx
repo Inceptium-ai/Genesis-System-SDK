@@ -257,7 +257,9 @@ export function PageErrorBoundary({ children, pageName }: PageErrorBoundaryProps
   return (
     <ErrorBoundary
       onError={(error) => {
-        console.error(`[${pageName ?? 'Page'}] Error:`, error);
+        // Pass the page name as a separate argument (not interpolated into the
+        // first console argument) so it can never act as a format string.
+        console.error('[PageErrorBoundary]', pageName ?? 'Page', error);
       }}
       fallback={
         <div style={styles.container}>

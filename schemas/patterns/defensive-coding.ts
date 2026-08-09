@@ -47,6 +47,9 @@
  * const city = safeGet(user, 'address.city', 'Unknown');
  * const price = safeGet(product, 'variants.0.price', 0);
  */
+/** Keys that would walk or mutate the prototype chain — never traverse them. */
+const UNSAFE_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function safeGet<T>(
   obj: unknown,
   path: string,
@@ -54,14 +57,24 @@ export function safeGet<T>(
 ): T {
   const keys = path.split('.');
   let result: unknown = obj;
-  
+
   for (const key of keys) {
     if (result === null || result === undefined) {
       return defaultValue;
     }
+    // Guard against prototype-chain traversal: reject dangerous keys and only
+    // read own properties, so attacker-controlled paths like
+    // '__proto__.polluted' or 'constructor.prototype' resolve to the default.
+    if (
+      UNSAFE_PATH_KEYS.has(key) ||
+      !Object.prototype.hasOwnProperty.call(result, key)
+    ) {
+      return defaultValue;
+    }
+    // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop -- read-only own-property traversal; __proto__/constructor/prototype rejected above
     result = (result as Record<string, unknown>)[key];
   }
-  
+
   return (result ?? defaultValue) as T;
 }
 
